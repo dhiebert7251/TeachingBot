@@ -6,10 +6,6 @@ import edu.wpi.first.math.controller.PIDController;
 import edu.wpi.first.wpilibj2.command.Command;
 import frc.robot.subsystems.DriveTrain;
 
-/**
- * PID-turns to an absolute heading, given in degrees (CCW-positive, 0 = whatever
- * heading the navX gyro was last reset to). Positive = turn left.
- */
 public class TurnToAngleCommand extends Command {
 
     private final DriveTrain drivetrain;
@@ -22,8 +18,6 @@ public class TurnToAngleCommand extends Command {
         addRequirements(drivetrain);
 
         pid = new PIDController(TURN_KP, TURN_KI, TURN_KD);
-        // Without this, turning from 179 to -179 degrees (really a 2-degree turn)
-        // would look like a 358-degree turn the long way around.
         pid.enableContinuousInput(-180, 180);
         pid.setTolerance(TURN_TOLERANCE_DEGREES);
     }
@@ -37,9 +31,6 @@ public class TurnToAngleCommand extends Command {
     @Override
     public void execute() {
         double output = pid.calculate(drivetrain.getHeadingDegrees());
-        // Turning in place: equal and opposite power to each side. Positive output
-        // steers left, so the left side goes backward while the right side goes
-        // forward.
         drivetrain.drive(-output, output);
     }
 

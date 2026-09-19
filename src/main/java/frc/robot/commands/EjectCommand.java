@@ -5,8 +5,6 @@ import static frc.robot.Constants.GripperConstants.*;
 import edu.wpi.first.wpilibj2.command.Command;
 import frc.robot.subsystems.Gripper;
 
-/** Same shape as IntakeCommand.java, opposite direction -- see that file for the full
- * explanation of this class's constructor and lifecycle methods. */
 public class EjectCommand extends Command {
 
     private final Gripper gripper;

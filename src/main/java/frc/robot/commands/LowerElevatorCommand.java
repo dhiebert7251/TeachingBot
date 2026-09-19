@@ -5,7 +5,6 @@ import static frc.robot.Constants.ElevatorConstants.LOWER_SPEED;
 import edu.wpi.first.wpilibj2.command.Command;
 import frc.robot.subsystems.Elevator;
 
-/** See RaiseElevatorCommand.java for the shared reasoning behind this pair. */
 public class LowerElevatorCommand extends Command {
 
     private final Elevator elevator;

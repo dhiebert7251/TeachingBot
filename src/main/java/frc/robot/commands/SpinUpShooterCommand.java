@@ -5,11 +5,6 @@ import static frc.robot.Constants.ShooterConstants.TARGET_RPM;
 import edu.wpi.first.wpilibj2.command.Command;
 import frc.robot.subsystems.Shooter;
 
-/**
- * Only one command for Shooter: spin the flywheel to a fixed target speed and hold
- * it until interrupted. No {@code execute()} -- Phoenix 6's velocity control is
- * closed-loop on the TalonFX itself, so there's nothing to redo every loop.
- */
 public class SpinUpShooterCommand extends Command {
 
     private final Shooter shooter;
