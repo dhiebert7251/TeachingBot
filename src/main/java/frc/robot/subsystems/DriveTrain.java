@@ -13,29 +13,33 @@ import com.revrobotics.spark.config.SparkMaxConfig;
 import com.studica.frc.AHRS;
 
 import edu.wpi.first.math.MathUtil;
+import edu.wpi.first.math.estimator.DifferentialDrivePoseEstimator;
+import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.kinematics.ChassisSpeeds;
+import edu.wpi.first.math.kinematics.DifferentialDriveKinematics;
+import edu.wpi.first.math.kinematics.DifferentialDriveWheelSpeeds;
 import edu.wpi.first.wpilibj.drive.DifferentialDrive;
+import edu.wpi.first.wpilibj.smartdashboard.Field2d;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 
-/**
- * DriveTrain subsystem -- 6-wheel drop-center differential (tank) drive.
- *
- * <p>Subsystems only expose plain hardware actions; command timing/state (PID loops,
- * etc.) lives in commands/ -- see that package for this subsystem's four commands
- * (teleop drive, drive-to-distance, turn-to-angle, reset gyro).
- */
+import frc.robot.VisionMeasurement;
+
+import java.util.Optional;
+
 public class DriveTrain extends SubsystemBase {
 
-    // Only the lead motors are ever commanded directly; followers are configured once
-    // in configureMotors() to mirror them and never touched again.
+    private final Vision vision;
+
     private final SparkMax leftLead = new SparkMax(LEFT_LEAD_CAN_ID, MotorType.kBrushless);
     private final SparkMax leftFollow = new SparkMax(LEFT_FOLLOW_CAN_ID, MotorType.kBrushless);
     private final SparkMax rightLead = new SparkMax(RIGHT_LEAD_CAN_ID, MotorType.kBrushless);
     private final SparkMax rightFollow = new SparkMax(RIGHT_FOLLOW_CAN_ID, MotorType.kBrushless);
 
-    // Package-private (not private): DriveTrainTest, in this same package, pokes
-    // these directly via .setPosition() to simulate encoder movement without real
-    // hardware.
+    // Package-private (not private): DriveTrainTest.java, in this same package, pokes
+    // these directly to fake driven distance in tests -- Java's `private` has no
+    // bypassable loophole the way Python's underscore convention does.
     final RelativeEncoder leftEncoder = leftLead.getEncoder();
     final RelativeEncoder rightEncoder = rightLead.getEncoder();
 
@@ -43,21 +47,33 @@ public class DriveTrain extends SubsystemBase {
 
     private final DifferentialDrive driver = new DifferentialDrive(leftLead, rightLead);
 
-    // Only publish telemetry every Nth loop to avoid flooding NetworkTables.
+    private final DifferentialDriveKinematics kinematics = new DifferentialDriveKinematics(TRACK_WIDTH_METERS);
+
+    private final DifferentialDrivePoseEstimator poseEstimator;
+
+    private final Field2d field = new Field2d();
+
     private int telemetryLoopCounter = 0;
 
-    public DriveTrain() {
+    public DriveTrain(Vision vision) {
+        this.vision = vision;
+
         configureMotors();
+
+        poseEstimator = new DifferentialDrivePoseEstimator(
+            kinematics,
+            Rotation2d.fromDegrees(getHeadingDegrees()),
+            getLeftDistanceMeters(),
+            getRightDistanceMeters(),
+            new Pose2d()
+        );
+
+        SmartDashboard.putData("Field", field);
     }
 
     private void configureMotors() {
-        // Rescales raw motor-shaft rotations into meters traveled: circumference per
-        // wheel rotation, divided by gear ratio (motor spins GEAR_RATIO times per
-        // wheel rotation).
         double conversionFactor = WHEEL_CIRCUMFERENCE_METERS / GEAR_RATIO;
 
-        // inverted(true): the gearboxes are mirrored, so one side must have its sign
-        // flipped in software for "both sides forward" to actually mean forward.
         SparkMaxConfig rightLeadConfig = new SparkMaxConfig();
         rightLeadConfig.inverted(true);
         rightLeadConfig.idleMode(IdleMode.kCoast);
@@ -90,10 +106,6 @@ public class DriveTrain extends SubsystemBase {
         rightEncoder.setPosition(0);
     }
 
-    // ---- Plain hardware actions ----
-
-    /** Tank-drives at the given left/right duty cycles, each in [-1, 1]. The deadband
-     * prevents joystick creep when a stick doesn't return to exactly 0 on release. */
     public void drive(double left, double right) {
         driver.tankDrive(
             MathUtil.applyDeadband(left, JOYSTICK_DEADBAND),
@@ -104,11 +116,6 @@ public class DriveTrain extends SubsystemBase {
     public void stop() {
         driver.stopMotor();
     }
-
-    // ---- Sensors ----
-    //
-    // Meters internally (WPILib math expects it); converted to feet only in this
-    // file's periodic() telemetry and in DriveDistanceCommand's constructor.
 
     public double getLeftDistanceMeters() {
         return leftEncoder.getPosition();
@@ -130,14 +137,21 @@ public class DriveTrain extends SubsystemBase {
         return rightEncoder.getVelocity();
     }
 
+    // Public (not package-private) because ApproachTagCommandTest.java lives in a
+    // different package (frc.robot.commands) and needs to fake driven distance too --
+    // package-private access can't span two different packages.
+    public void setEncoderPositionsForTest(double leftMeters, double rightMeters) {
+        leftEncoder.setPosition(leftMeters);
+        rightEncoder.setPosition(rightMeters);
+    }
+
     public void resetEncoders() {
         leftEncoder.setPosition(0);
         rightEncoder.setPosition(0);
     }
 
     public double getHeadingDegrees() {
-        // navX reports clockwise-positive; flip here so this codebase stays
-        // CCW-positive, matching WPILib convention.
+        // navX reports clockwise-positive; this codebase's convention is CCW-positive.
         return -gyro.getAngle();
     }
 
@@ -145,8 +159,36 @@ public class DriveTrain extends SubsystemBase {
         gyro.reset();
     }
 
+    public DifferentialDriveWheelSpeeds getWheelSpeeds() {
+        return new DifferentialDriveWheelSpeeds(getLeftVelocityMetersPerSecond(), getRightVelocityMetersPerSecond());
+    }
+
+    public ChassisSpeeds getChassisSpeeds() {
+        return kinematics.toChassisSpeeds(getWheelSpeeds());
+    }
+
+    public Pose2d getPose() {
+        return poseEstimator.getEstimatedPosition();
+    }
+
+    public void resetPose(Pose2d pose) {
+        resetEncoders();
+        poseEstimator.resetPosition(Rotation2d.fromDegrees(getHeadingDegrees()), 0.0, 0.0, pose);
+    }
+
     @Override
     public void periodic() {
+        poseEstimator.update(
+            Rotation2d.fromDegrees(getHeadingDegrees()), getLeftDistanceMeters(), getRightDistanceMeters()
+        );
+
+        Optional<VisionMeasurement> measurement = vision.getBestVisionMeasurementIfFresh();
+        measurement.ifPresent(m ->
+            poseEstimator.addVisionMeasurement(m.estimatedPose(), m.timestampSeconds(), m.standardDeviations())
+        );
+
+        field.setRobotPose(getPose());
+
         telemetryLoopCounter++;
         if (telemetryLoopCounter >= TELEMETRY_PERIOD_LOOPS) {
             telemetryLoopCounter = 0;
@@ -155,6 +197,9 @@ public class DriveTrain extends SubsystemBase {
             SmartDashboard.putNumber("DriveTrain/LeftVelocityFPS", getLeftVelocityMetersPerSecond() / METERS_PER_FOOT);
             SmartDashboard.putNumber("DriveTrain/RightVelocityFPS", getRightVelocityMetersPerSecond() / METERS_PER_FOOT);
             SmartDashboard.putNumber("DriveTrain/HeadingDeg", getHeadingDegrees());
+            Pose2d pose = getPose();
+            SmartDashboard.putNumber("DriveTrain/PoseXFeet", pose.getX() / METERS_PER_FOOT);
+            SmartDashboard.putNumber("DriveTrain/PoseYFeet", pose.getY() / METERS_PER_FOOT);
         }
     }
 }

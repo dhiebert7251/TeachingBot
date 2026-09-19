@@ -13,11 +13,6 @@ import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 
-/**
- * Trigger subsystem -- small NEO-driven cam that flicks a game piece into the
- * shooter. One limit switch defines its rest ("home") position; the "run until one
- * full revolution" logic lives in commands/FireCommand.java, not here.
- */
 public class Trigger extends SubsystemBase {
 
     private final SparkMax camMotor = new SparkMax(CAM_MOTOR_ID, MotorType.kBrushless);
@@ -29,8 +24,6 @@ public class Trigger extends SubsystemBase {
     public Trigger() {
         SparkMaxConfig camConfig = new SparkMaxConfig();
         camConfig.inverted(CAM_MOTOR_INVERTED);
-        // Brake, not Coast: an idle cam swinging freely could drift off "home" and
-        // throw off the next fire cycle's home-switch reading.
         camConfig.idleMode(IdleMode.kBrake);
         camConfig.smartCurrentLimit(CAM_CURRENT_LIMIT);
         camMotor.configure(camConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);

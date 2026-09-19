@@ -17,16 +17,8 @@ import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 
-/**
- * Shooter subsystem -- single flywheel (Kraken/TalonFX), fixed target RPM.
- *
- * <p>Simpler than the competition bot's Shooter: no distance-based RPM table (no
- * vision on this robot) -- just a single configurable target speed.
- */
 public class Shooter extends SubsystemBase {
 
-    // Control request objects: rebuilt/re-sent via setControl() whenever the target
-    // changes, rather than passed as fresh arguments every loop.
     private final VelocityVoltage velocityRequest = new VelocityVoltage(0).withSlot(0);
     private final NeutralOut neutralRequest = new NeutralOut();
 
@@ -45,8 +37,6 @@ public class Shooter extends SubsystemBase {
                 .withStatorCurrentLimit(CURRENT_LIMIT)
                 .withStatorCurrentLimitEnable(true))
             .withSlot0(
-                // Runs the PID+feedforward loop directly on the TalonFX hardware,
-                // unlike DriveTrain's PID commands, which compute in software.
                 new Slot0Configs()
                     .withKP(SHOOTER_KP)
                     .withKI(SHOOTER_KI)
@@ -59,10 +49,6 @@ public class Shooter extends SubsystemBase {
         }
     }
 
-    /**
-     * Commands the flywheel to spin at {@code rpm}. Only needs to be called once when
-     * the target changes -- the velocity loop is closed on the TalonFX itself.
-     */
     public void setTargetRpm(double rpm) {
         targetRpm = rpm;
         flywheelMotor.setControl(velocityRequest.withVelocity(rpm / FLYWHEEL_GEAR_RATIO / 60.0));

@@ -13,15 +13,8 @@ import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 
-/**
- * Elevator subsystem -- 2-stage single-mast elevator (AndyMark "Elevator in a Box"
- * style cascade rig), spring-assisted extension, motor+rope retraction. Entirely
- * open-loop: no encoder exists, only a limit switch at each end of travel.
- */
 public class Elevator extends SubsystemBase {
 
-    // kBrushed: the Redline motor has physical brushes and no built-in encoder,
-    // unlike every NEO elsewhere in this project.
     private final SparkMax liftMotor = new SparkMax(LIFT_MOTOR_ID, MotorType.kBrushed);
 
     private final DigitalInput topLimitSwitch = new DigitalInput(TOP_LIMIT_SWITCH_DIO_PORT);
@@ -45,7 +38,6 @@ public class Elevator extends SubsystemBase {
         return BOTTOM_LIMIT_SWITCH_INVERTED ? !raw : raw;
     }
 
-    /** speed is a duty cycle in [-1, 1]: positive raises, negative lowers. */
     public void setSpeed(double speed) {
         liftMotor.set(speed);
     }
