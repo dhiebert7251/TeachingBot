@@ -6,10 +6,6 @@ import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import frc.robot.subsystems.DriveTrain;
 
-/**
- * Builds the SmartDashboard autonomous-routine chooser for the teaching-bot proof of
- * concept: two real routines plus a "Do Nothing" default.
- */
 public final class AutoChooser {
     private AutoChooser() {}
 

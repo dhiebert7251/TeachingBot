@@ -15,7 +15,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** Unit tests for Elevator's limit-switch-gated raise/lower commands. */
 class ElevatorTest {
 
     private RobotContainer robotContainer;
@@ -46,11 +45,9 @@ class ElevatorTest {
     void raiseCommandStopsAtTop() {
         DIOSim topSim = new DIOSim(Constants.ElevatorConstants.TOP_LIMIT_SWITCH_DIO_PORT);
 
-        topSim.setValue(false);
+        topSim.setValue(false); // not at top
         assertFalse(elevator.isAtTop());
 
-        // A command can only be scheduled while the robot is enabled (the default
-        // runsWhenDisabled() is false), so enable it first.
         DriverStationSim.setEnabled(true);
         DriverStationSim.notifyNewData();
         step(0.02);
@@ -58,9 +55,9 @@ class ElevatorTest {
         RaiseElevatorCommand command = new RaiseElevatorCommand(elevator);
         command.schedule();
         step(0.1);
-        assertTrue(command.isScheduled());
+        assertTrue(command.isScheduled()); // whileTrue-style: keeps running while held
 
-        topSim.setValue(true);
+        topSim.setValue(true); // reached the top
         step(0.1);
         assertTrue(elevator.isAtTop());
     }
@@ -69,7 +66,7 @@ class ElevatorTest {
     void lowerCommandStopsAtBottom() {
         DIOSim bottomSim = new DIOSim(Constants.ElevatorConstants.BOTTOM_LIMIT_SWITCH_DIO_PORT);
 
-        bottomSim.setValue(false);
+        bottomSim.setValue(false); // not at bottom
         assertFalse(elevator.isAtBottom());
 
         DriverStationSim.setEnabled(true);
@@ -81,7 +78,7 @@ class ElevatorTest {
         step(0.1);
         assertTrue(command.isScheduled());
 
-        bottomSim.setValue(true);
+        bottomSim.setValue(true); // reached the bottom
         step(0.1);
         assertTrue(elevator.isAtBottom());
     }

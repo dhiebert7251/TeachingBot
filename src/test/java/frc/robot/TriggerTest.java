@@ -15,11 +15,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/**
- * Unit tests for Trigger's FireCommand edge-detection state machine. The cam has
- * only one sensor (a limit switch at "home"), so "one fire" is defined as: leave
- * home, then come back to home.
- */
 class TriggerTest {
 
     private RobotContainer robotContainer;
@@ -60,8 +55,6 @@ class TriggerTest {
         FireCommand command = new FireCommand(trigger);
         command.schedule();
         step(0.1);
-        // Still "at home" on the very first tick -- command must not report finished
-        // until it has actually left home at least once.
         assertTrue(command.isScheduled());
 
         limitSwitchSim.setValue(false);
@@ -77,15 +70,14 @@ class TriggerTest {
     void fireCommandTimesOutIfNeverReturnsHome() {
         DIOSim limitSwitchSim = new DIOSim(Constants.TriggerConstants.LIMIT_SWITCH_DIO_PORT);
 
-        limitSwitchSim.setValue(false);
+        limitSwitchSim.setValue(false); // never at home -- simulates a jam
         DriverStationSim.setEnabled(true);
         DriverStationSim.notifyNewData();
         step(0.02);
 
-        // .withTimeout() wraps FireCommand in a new Command object -- only that
-        // wrapper is actually scheduled, so its isScheduled() is what must be
-        // checked, not the inner FireCommand's (which would read false from the
-        // first loop and let this test pass without exercising the timeout).
+        // The wrapper .withTimeout() returns, not the inner FireCommand, is what's
+        // actually scheduled -- checking the inner command's isScheduled() here would
+        // read false from the first loop and pass without testing the timeout at all.
         Command timedCommand = new FireCommand(trigger).withTimeout(Constants.TriggerConstants.FIRE_TIMEOUT_SECONDS);
         timedCommand.schedule();
         step(Constants.TriggerConstants.FIRE_TIMEOUT_SECONDS + 0.5);

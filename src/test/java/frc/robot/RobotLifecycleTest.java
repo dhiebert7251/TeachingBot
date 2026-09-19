@@ -10,10 +10,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/**
- * Smoke test: steps the whole robot through disabled -&gt; autonomous -&gt; teleop and
- * confirms nothing throws.
- */
 class RobotLifecycleTest {
 
     private RobotContainer robotContainer;
