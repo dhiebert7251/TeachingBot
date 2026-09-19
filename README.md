@@ -1,1 +1,2680 @@
-# TeachingBot
+# Teaching-Bot (Java): Odometry and Kinematics
+
+This is the **Java sibling** of `teaching-bot-odometry` (the Python branch of this
+same repo), which itself builds on `teaching-bot-poc`. This branch builds on
+`teaching-bot-poc-java` the same way: adding `DifferentialDriveKinematics` and
+`DifferentialDriveOdometry` to `DriveTrain`, plus a `Field2d` widget, so the robot
+tracks its estimated (X, Y, heading) position on the field from encoders and the
+gyro alone. Every other design decision -- explicit-class commands, no lambdas, the
+same physical robot -- carries over unchanged from `teaching-bot-poc-java`; see that
+branch's README for the full reasoning behind those, and for the general
+Java-vs-Python comparison material this README doesn't repeat.
+
+**Read this before anything else: this project has not been compiled or run.** See
+[Verification status](#verification-status) below.
+
+## Contents
+
+- [Verification status](#verification-status)
+- [What changed from teaching-bot-poc-java](#what-changed-from-teaching-bot-poc-java)
+- [Odometry and kinematics](#odometry-and-kinematics)
+- [Running tests](#running-tests)
+- [Building and running this project](#building-and-running-this-project)
+- [Design decisions and deliberate simplifications](#design-decisions-and-deliberate-simplifications)
+- [Annotated source code](#annotated-source-code)
+- [Using this as a teaching curriculum](#using-this-as-a-teaching-curriculum)
+
+## Verification status
+
+**Still not compiled, run, or tested** -- same sandboxed session, same network policy
+blocking `frcmaven.wpi.edu` and the REVLib/CTRE/Studica Maven hosts. See
+`teaching-bot-poc-java`'s README for the full explanation; everything there applies
+here too, including that branch's own `Robot.java` fix -- this branch inherited
+`Robot.java` unchanged, so the same build-breaking bug (extending a nonexistent
+`TimedCommandRobot` class instead of `TimedRobot`, with no `robotPeriodic()`
+override to call the scheduler) was present here too, and has now been fixed here
+the same way: extend `TimedRobot` directly, with an explicit `robotPeriodic()`
+override. See that branch's README for the full explanation of the bug and why it
+was confirmed real, not just suspected.
+
+**One specific, disclosed uncertainty new to this branch:** `DriveTrain.getPose()`
+below calls `odometry.getPoseMeters()`. WPILib's `DifferentialDriveOdometry` class
+extends a shared generic `Odometry<T>` base class (also used by
+`MecanumDriveOdometry`, `SwerveDriveOdometry`, ...), and `getPoseMeters()` is that
+base class's traditional accessor name across the WPILib seasons this was checked
+against. It could **not** be independently confirmed against the installed 2026
+Java WPILib package the way `DifferentialDrivePoseEstimator`'s API was confirmed
+against the real competition port's actual source (that repo skips plain odometry
+entirely and goes straight to a pose estimator, so there was no real `.java` file to
+cross-check this specific accessor against). The Python sibling's equivalent
+(`self._odometry.getPose()`) was independently verified by actually running its
+tests in this same session, and RobotPy's `wpimath` bindings are generated directly
+from the same WPILib C++ core Java also wraps -- strong circumstantial evidence, not
+proof. **If `./gradlew build` reports a missing/renamed method here, this line is
+the first place to check.**
+
+## What changed from teaching-bot-poc-java
+
+Only `subsystems/DriveTrain.java` and `src/test/java/frc/robot/subsystems/DriveTrainTest.java`:
+
+- Two new fields: `DifferentialDriveKinematics kinematics` and
+  `DifferentialDriveOdometry odometry`, plus a `Field2d field` widget.
+- `odometry` is assigned in the **constructor body**, not inline at its field
+  declaration -- see that constructor's doc comment for why (it needs
+  `configureMotors()` to have already zeroed the encoders first, and Java runs field
+  initializers and constructor-body statements in the order they're written).
+- Four new public methods: `getWheelSpeeds()`, `getChassisSpeeds()`, `getPose()`,
+  `resetPose(Pose2d)`.
+- `periodic()` now calls `odometry.update(...)` every loop and
+  `field.setRobotPose(getPose())`, plus two new dashboard keys,
+  `DriveTrain/PoseXFeet`/`PoseYFeet`.
+- Four new tests in `DriveTrainTest.java`: `poseStartsAtOrigin`,
+  `odometryTracksStraightLineDriving`, `resetPoseSeedsOdometryAndZeroesEncoders`,
+  `chassisSpeedsZeroWhenStopped` -- Java translations of the four the Python sibling
+  added for the same reason.
+
+Nothing else in the project (`Constants.java`, every command, every other
+subsystem, `RobotContainer.java`, autonomous) changed at all -- except `Robot.java`,
+which only changed to carry the `TimedCommandRobot` -> `TimedRobot` fix noted above.
+
+## Odometry and kinematics
+
+`DriveTrain` now tracks the robot's estimated position on the field as a `Pose2d`
+(X meters, Y meters, heading), via two new pieces added in the constructor:
+
+- **`DifferentialDriveKinematics(TRACK_WIDTH_METERS)`** -- the math relating each
+  wheel's own speed to the whole robot's forward speed and turn rate (a
+  `ChassisSpeeds`). It needs only the track width because, for a tank drive, that's
+  the only geometry that matters: how far apart the wheels are determines how fast
+  the robot turns for a given difference between the two sides' speeds.
+  `getChassisSpeeds()` exposes this; nothing in this project currently drives from
+  it, but it's the natural building block for anything that needs "how fast is the
+  whole robot going" rather than "how fast is each wheel going."
+- **`DifferentialDriveOdometry`** -- the part that actually accumulates position
+  <i>over time</i>. Every loop, `periodic()` feeds it the current gyro heading and
+  both encoder distances, and it integrates those into a running pose estimate --
+  dead reckoning, the same technique ships have used for centuries: no outside
+  reference, just "I know my heading and how far each wheel has turned, so here's
+  where I must be now." `getPose()` reads that estimate; `resetPose()` seeds it with
+  a known starting position (and, since odometry measures distance <i>since the
+  last reset</i>, zeroes the encoders at the same time -- doing one without the
+  other would make the two disagree about where "zero" is).
+
+A `Field2d` widget, registered once in the constructor and updated every loop in
+`periodic()`, draws this estimated pose on a picture of the field in
+Shuffleboard/Glass.
+
+**Dead reckoning drifts.** Nothing corrects this pose against reality -- a
+slightly-off track-width measurement, wheel scrub while turning, or a wheel briefly
+losing traction all introduce small errors that accumulate the longer the robot
+drives without a reset. That's not a bug to fix here; it's <i>the</i> reason
+vision-based correction is worth learning next, on `teaching-bot-vision-java`, which
+fuses AprilTag detections back into this same pose to correct that drift instead of
+trusting dead reckoning alone for an entire match -- identical framing to the
+Python sibling's own README at this exact point in its lineage.
+
+## Running tests
+
+```
+./gradlew test
+```
+
+`subsystems/DriveTrainTest.java` gained four tests over the poc-java branch's
+version -- see [What changed](#what-changed-from-teaching-bot-poc-java) above.
+`odometryTracksStraightLineDriving` calls `drivetrain.periodic()` directly rather
+than stepping the scheduler, matching the Python sibling's pattern exactly (see that
+branch's own README for why its version needs to do this to dodge a physics-engine
+race -- this branch has no physics engine to race, so the direct call here is really
+just for one deterministic update from a known sensor state, not a workaround for
+anything).
+
+## Building and running this project
+
+Identical to `teaching-bot-poc-java` -- see that branch's README for the
+`gradle-wrapper.jar` gap and how to fix it in one command.
+
+```
+./gradlew build   # compile + run tests
+./gradlew simulateJava   # run in WPILib's desktop simulator
+```
+
+## Design decisions and deliberate simplifications
+
+Identical to `teaching-bot-poc-java`'s list, plus one addition specific to this
+branch:
+
+- **Odometry added on its own, before vision, as a separate branch** -- not because
+  Java needed it split up any differently than Python did, but because the same
+  pedagogical argument applies in both languages: dead reckoning and vision
+  correction are two separable ideas worth understanding one at a time. See
+  [Odometry and kinematics](#odometry-and-kinematics) above.
+
+## Annotated source code
+
+The code in this repository has had its comments trimmed to near-zero (see each file); this section preserves the original, fully-annotated teaching version of every file for reference.
+
+### src/main/java/frc/robot/Constants.java
+
+```java
+package frc.robot;
+
+/**
+ * Robot-wide numerical/boolean constants for the teaching-bot proof of concept.
+ *
+ * <p>One nested class per subsystem, same convention as the real competition port
+ * (2026_competition_code) -- see that repo's Constants.java. Nothing functional lives
+ * here, only numbers/IDs.
+ *
+ * <p>A note for anyone coming from the Python sibling of this project
+ * (teaching-bot-poc, in this same repo): Python's constants.py used a plain class per
+ * subsystem with bare {@code ALL_CAPS = value} attributes -- Python doesn't require a
+ * value to be typed, and a class attribute is "constant" purely by convention (nothing
+ * stops code from reassigning it). Java has no such convention-only option: every field
+ * needs a declared type ({@code int}, {@code double}, {@code boolean}, ...), and making
+ * it an actual, enforced constant needs two keywords together:
+ * <ul>
+ *   <li>{@code static} -- the field belongs to the CLASS itself, not to any one
+ *       instance. Without it, every {@code new DriveTrainConstants()} would get its own
+ *       separate copy of {@code TRACK_WIDTH_METERS} -- exactly backwards from what a
+ *       shared constant needs. (Nothing in this file is ever actually instantiated with
+ *       {@code new} -- these classes exist purely to hold {@code static} fields.)</li>
+ *   <li>{@code final} -- once assigned, this field can never be reassigned. This is
+ *       what actually makes it a *constant* rather than just a shared variable; leaving
+ *       it off would compile fine but silently allow some other file to change
+ *       {@code TRACK_WIDTH_METERS} out from under every other file that reads it.</li>
+ * </ul>
+ * Every field below is {@code public static final}, in that order by convention:
+ * access modifier first, then {@code static}, then {@code final}, then the type, then
+ * the name.
+ *
+ * <p>Assumptions worth knowing about (see README for the full list):
+ * <ul>
+ *   <li>The shooter's Kraken is a Kraken X60. Nothing in this project's simulation
+ *       models the shooter at all, so this only matters if someone adds that later.</li>
+ *   <li>Every gear ratio, motor inversion, limit-switch polarity, and PID gain below is
+ *       a starting guess, marked TODO, meant to be corrected once the real robot exists
+ *       to test against.</li>
+ * </ul>
+ */
+public final class Constants {
+
+    // A private constructor with no body is the standard Java idiom for "this class is
+    // never meant to be instantiated" -- since every member below is static, a caller
+    // never needs a Constants object, only Constants.SomeNestedClass.SOME_FIELD.
+    // Marking the constructor private (rather than just leaving the default public one)
+    // makes that intent something the compiler enforces, not just something a comment
+    // asks nicely for.
+    private Constants() {}
+
+    // wpimath (WPILib's own math library) works in meters -- that's not a stylistic
+    // choice we get to opt out of, it's baked into DifferentialDriveKinematics,
+    // PIDController, etc. But FRC parts, and the humans driving/wrenching on the robot,
+    // think in inches/feet. This one constant is the single conversion point between
+    // those two worlds: every "feet" value entering this codebase (a command's
+    // constructor argument, a dashboard readout) gets multiplied or divided by this,
+    // once, right at that boundary -- see commands/DriveDistanceCommand.java and
+    // DriveTrain.periodic() for the two places that actually happen.
+    public static final double METERS_PER_FOOT = 0.3048;
+
+    public static final class OperatorConstants {
+        private OperatorConstants() {}
+
+        public static final int DRIVER_CONTROLLER_PORT = 0;
+        public static final int OPERATOR_CONTROLLER_PORT = 1;
+    }
+
+    public static final class DriveTrainConstants {
+        private DriveTrainConstants() {}
+
+        // CAN IDs -- 4x NEO 2.0 via REV SparkMax, 2 per side (lead + follower).
+        public static final int LEFT_LEAD_CAN_ID = 20;
+        public static final int LEFT_FOLLOW_CAN_ID = 21;
+        public static final int RIGHT_LEAD_CAN_ID = 22;
+        public static final int RIGHT_FOLLOW_CAN_ID = 23;
+
+        public static final int CURRENT_LIMIT = 60; // amps
+
+        // Physical dimensions.
+        // 6-wheel "drop center" drivetrain: 3 wheels per side, the center wheel mounted
+        // 1/4" LOWER than the front/back wheels. On a rigid frame that means the center
+        // wheel touches down first, and only ONE of the front or back wheels shares the
+        // ground with it at any moment (whichever end the robot's weight happens to be
+        // biased toward) -- never all 3. Effectively, each side only ever has 2 real
+        // contact points on the ground, spaced closer together (center-to-front or
+        // center-to-back, WHEEL_CENTER_SPACING_METERS) than the full front-to-back
+        // wheelbase would be. A shorter ground-contact wheelbase means less wheel scrub
+        // (sideways sliding) while turning, which is the entire point of dropping the
+        // center wheel: 6-wheel traction/durability for driving straight, without
+        // paying a 6-wheel-flat drivetrain's full turning friction penalty. It doesn't
+        // change any of the kinematics math below: WPILib's DifferentialDriveKinematics
+        // only cares about the distance between the left and right wheels
+        // (TRACK_WIDTH_METERS), not how many wheels are on a side or which ones are
+        // touching down.
+        public static final double DROP_CENTER_WHEEL_DROP_METERS = 0.25 * 0.0254; // 1/4 inch, informational only
+
+        public static final double WHEEL_DIAMETER_METERS = 6.0 * 0.0254; // 6 inches
+        public static final double WHEEL_WIDTH_METERS = 1.0 * 0.0254; // 1 inch, informational only
+        public static final double WHEEL_CIRCUMFERENCE_METERS = WHEEL_DIAMETER_METERS * Math.PI;
+
+        public static final double GEAR_RATIO = 8.4;
+
+        public static final double TRACK_WIDTH_METERS = 23.0 * 0.0254; // left-to-right wheel center distance
+        public static final double WHEEL_CENTER_SPACING_METERS = 13.0 * 0.0254; // front-mid/mid-back spacing, per side
+
+        public static final double ROBOT_LENGTH_METERS = 32.0 * 0.0254; // front-to-back, bumpers included
+        public static final double ROBOT_WIDTH_METERS = 28.0 * 0.0254; // side-to-side, bumpers included
+        public static final double ROBOT_MASS_KG = 118.0 * 0.45359237; // with bumpers
+
+        public static final double JOYSTICK_DEADBAND = 0.05;
+        public static final int TELEMETRY_PERIOD_LOOPS = 5;
+        public static final double SPEED_SCALE = 0.7;
+
+        // Gyro-based turning (PID) -- see commands/TurnToAngleCommand.java.
+        public static final double TURN_KP = 0.04;
+        public static final double TURN_KI = 0.0;
+        public static final double TURN_KD = 0.005;
+        public static final double TURN_TOLERANCE_DEGREES = 2.0;
+
+        // Distance-based driving (PID) -- see commands/DriveDistanceCommand.java. KP is
+        // deliberately conservative (a large error, e.g. commanding 10 feet from a
+        // standstill, would otherwise demand full power) and MAX_OUTPUT clamps the
+        // controller's output as a second, independent safety margin on top of that.
+        public static final double DRIVE_DISTANCE_KP = 1.5; // TODO: tune on the real robot -- starting point only
+        public static final double DRIVE_DISTANCE_KI = 0.0;
+        public static final double DRIVE_DISTANCE_KD = 0.1;
+        public static final double DRIVE_DISTANCE_TOLERANCE_METERS = 0.05;
+        public static final double DRIVE_DISTANCE_MAX_OUTPUT = 0.6; // clamp: never command more than 60% power
+    }
+
+    public static final class ShooterConstants {
+        private ShooterConstants() {}
+
+        // CAN ID: 30s decade, same subsystem-family convention as the competition bot
+        // (Shooter/Trigger both feed the same game piece path).
+        public static final int FLYWHEEL_MOTOR_ID = 30;
+
+        public static final boolean FLYWHEEL_INVERTED = false; // TODO: verify on bench
+
+        // 5 lb flywheel with 4x 4" compliant wheels as the shooting surface, driven by
+        // a Kraken X60.
+        public static final double FLYWHEEL_GEAR_RATIO = 1.0; // TODO: confirm -- assumed direct-drive until measured
+        public static final double SHOOTER_WHEEL_DIAMETER_METERS = 4.0 * 0.0254;
+
+        public static final int CURRENT_LIMIT = 40; // amps, TalonFX stator limit
+
+        public static final double TARGET_RPM = 3000.0; // TODO: tune once the shooter is built
+        public static final double RPM_TOLERANCE = 50.0;
+
+        public static final double SHOOTER_KP = 0.11; // TODO: tune -- starting point only, not measured
+        public static final double SHOOTER_KI = 0.0;
+        public static final double SHOOTER_KD = 0.0;
+        public static final double SHOOTER_KV = 0.12;
+    }
+
+    public static final class TriggerConstants {
+        private TriggerConstants() {}
+
+        // CAN ID: 30s decade, same family as Shooter.
+        public static final int CAM_MOTOR_ID = 31;
+
+        public static final boolean CAM_MOTOR_INVERTED = false; // TODO: verify on bench
+        public static final int CAM_CURRENT_LIMIT = 20; // amps, small NEO
+        public static final double CAM_FIRE_SPEED = 0.6; // [-1, 1] duty cycle while firing
+
+        // DIO ports.
+        public static final int LIMIT_SWITCH_DIO_PORT = 0;
+        public static final int BEAM_BREAK_1_DIO_PORT = 1; // e.g. "ball loaded, waiting to fire"
+        public static final int BEAM_BREAK_2_DIO_PORT = 2; // e.g. "ball at the shooter, ready to fire"
+
+        public static final boolean LIMIT_SWITCH_INVERTED = false; // TODO: verify polarity on bench (NC vs NO)
+        public static final boolean BEAM_BREAK_1_INVERTED = false; // TODO: verify polarity on bench
+        public static final boolean BEAM_BREAK_2_INVERTED = false; // TODO: verify polarity on bench
+
+        // Safety timeout in case the limit switch never re-triggers (a jam, a broken
+        // wire) -- without this, FireCommand could run the motor forever. Applied as a
+        // `.withTimeout()` decorator where FireCommand is bound in RobotContainer.java,
+        // not inside the command itself -- see that file for why.
+        public static final double FIRE_TIMEOUT_SECONDS = 2.0;
+    }
+
+    public static final class ElevatorConstants {
+        private ElevatorConstants() {}
+
+        // CAN ID: 40s decade -- a new subsystem family, one decade past Shooter/Trigger.
+        public static final int LIFT_MOTOR_ID = 40;
+
+        public static final boolean LIFT_MOTOR_INVERTED = false; // TODO: verify on bench
+        public static final int LIFT_CURRENT_LIMIT = 30; // amps -- Redline motors are small, keep this conservative
+
+        // No encoder on this motor: it's a brushed Redline with no built-in sensor, and
+        // no external encoder is installed. This subsystem is entirely open-loop,
+        // driven by a limit switch at each end of travel -- see subsystems/Elevator.java.
+        public static final double RAISE_SPEED = 0.5; // [-1, 1] duty cycle while raising (spring-assisted)
+        public static final double LOWER_SPEED = -0.7; // [-1, 1] duty cycle while lowering (against spring tension)
+
+        public static final int TOP_LIMIT_SWITCH_DIO_PORT = 3;
+        public static final int BOTTOM_LIMIT_SWITCH_DIO_PORT = 4;
+        public static final boolean TOP_LIMIT_SWITCH_INVERTED = false; // TODO: verify polarity on bench
+        public static final boolean BOTTOM_LIMIT_SWITCH_INVERTED = false; // TODO: verify polarity on bench
+    }
+
+    public static final class GripperConstants {
+        private GripperConstants() {}
+
+        // CAN ID: 40s decade, same family as Elevator (it rides on the elevator).
+        public static final int ROLLER_MOTOR_ID = 41;
+
+        public static final boolean ROLLER_MOTOR_INVERTED = false; // TODO: verify on bench
+        public static final int ROLLER_CURRENT_LIMIT = 20; // amps, small NEO 550
+
+        public static final double INTAKE_SPEED = 1.0;
+        public static final double EJECT_SPEED = -1.0;
+    }
+
+    public static final class Auto {
+        private Auto() {}
+
+        // The two autonomous routines' actual distances/angle, in feet/degrees (the
+        // "human" units) -- named here so they're easy to find and change without
+        // hunting through autonomous/AutoRoutines.java. Converted to meters only inside
+        // DriveDistanceCommand, right at the WPILib-math boundary.
+        public static final double DRIVE_FORWARD_ONLY_FEET = 10.0;
+        public static final double DRIVE_TURN_DRIVE_FIRST_LEG_FEET = 5.0;
+        public static final double DRIVE_TURN_DRIVE_TURN_DEGREES = 90.0; // positive = left (CCW)
+        public static final double DRIVE_TURN_DRIVE_SECOND_LEG_FEET = 3.0;
+    }
+}
+```
+
+### src/main/java/frc/robot/Main.java
+
+```java
+package frc.robot;
+
+import edu.wpi.first.wpilibj.RobotBase;
+
+/**
+ * Do NOT add any static variables to this class, or any initialization at all. Unless
+ * you know what you are doing, do not modify this file except to change the parameter
+ * class to the startRobot call.
+ *
+ * <p>{@code public final class Main} with a {@code private Main() {}} constructor is
+ * the standard WPILib idiom for "this class is never instantiated, only its
+ * {@code main} method is ever called" -- the same {@code private} no-instances pattern
+ * used throughout Constants.java, just applied to a class with actual behavior instead
+ * of only constants.
+ */
+public final class Main {
+    private Main() {}
+
+    /**
+     * Main initialization function. Do not perform any initialization here.
+     *
+     * <p>{@code String... args} is Java's "varargs" syntax -- it lets this method be
+     * called with any number of String arguments (including zero), collected into a
+     * single {@code String[]} inside the method. {@code RobotBase.startRobot(Robot::new)}
+     * is what actually builds and runs the robot: {@code Robot::new} is a method
+     * reference -- shorthand for "a function that, when called, returns
+     * {@code new Robot()}" -- which {@code startRobot} calls internally once it has set
+     * up everything a robot program needs (the HAL, the scheduler loop) around it.
+     */
+    public static void main(String... args) {
+        RobotBase.startRobot(Robot::new);
+    }
+}
+```
+
+### src/main/java/frc/robot/Robot.java
+
+```java
+package frc.robot;
+
+import edu.wpi.first.wpilibj.DataLogManager;
+import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj.TimedRobot;
+import edu.wpi.first.wpilibj2.command.Command;
+import edu.wpi.first.wpilibj2.command.CommandScheduler;
+
+/**
+ * Entry point for the teaching-bot proof of concept.
+ *
+ * <p><b>Corrected during a post-hoc code-review pass:</b> this class used to extend a
+ * class called {@code TimedCommandRobot}, imported from
+ * {@code edu.wpi.first.wpilibj2.command}. That class does not exist in Java WPILib --
+ * it's a RobotPy-only convenience ({@code commands2.TimedCommandRobot}, in the Python
+ * bindings) that automatically calls {@code CommandScheduler.getInstance().run()}
+ * every loop; there's no Java equivalent that does the same thing implicitly. The
+ * mistake would have failed to compile with "cannot find symbol," and even patched to
+ * compile, nothing would have called the scheduler at all -- autonomous and teleop
+ * commands would never actually run.
+ *
+ * <p>The fix: extend the real {@link TimedRobot} directly, and call the scheduler
+ * explicitly, once, from an overridden {@code robotPeriodic()} below -- exactly what
+ * every WPILib Java command-based robot does, including this team's own real
+ * competition port (whose {@code Robot.java} extends AdvantageKit's
+ * {@code LoggedRobot}, itself a {@code TimedRobot} subclass, and does this same
+ * explicit call).
+ *
+ * <p>No AdvantageKit, no vision-specific logging (unlike the real competition port's
+ * {@code Robot.java}) -- just {@link DataLogManager} for on-disk + NetworkTables
+ * logging, matching the Python teaching-bot's {@code robot.py} exactly.
+ */
+public class Robot extends TimedRobot {
+    // `Command` (an interface/abstract class) is the TYPE; `m_autonomousCommand` can
+    // hold `null` (no autonomous command selected) or any object that implements
+    // Command. Python's equivalent used `Optional[Command] = None` as a type hint --
+    // Java has no separate "nullable" annotation built into the language the way
+    // Python's `Optional[X]` is; ANY non-primitive Java type (anything that isn't
+    // `int`/`double`/`boolean`/etc.) can already hold `null`, so `Command` alone is the
+    // whole type, and `null` is a value it can take on without any extra syntax.
+    private Command m_autonomousCommand;
+
+    // `RobotContainer` is a type WE wrote (see RobotContainer.java) -- Java doesn't
+    // distinguish "a class from the standard library" from "a class from this project"
+    // in its syntax at all; both are used exactly the same way once imported.
+    public RobotContainer m_robotContainer;
+
+    /**
+     * This function is run when the robot is first started up and should be used for
+     * any initialization code.
+     */
+    @Override
+    public void robotInit() {
+        DataLogManager.start();
+        DriverStation.startDataLog(DataLogManager.getLog());
+
+        m_robotContainer = new RobotContainer();
+    }
+
+    /**
+     * Runs every ~20ms, no matter what mode the robot is in -- this is the one place
+     * {@code CommandScheduler.getInstance().run()} has to be called from. It's what
+     * actually polls button bindings, starts newly-scheduled commands, runs already-
+     * scheduled commands' {@code execute()}, checks {@code isFinished()}, and calls
+     * every registered subsystem's {@code periodic()}. Without this override, nothing
+     * in the command-based framework -- not a single command, not a single
+     * subsystem's {@code periodic()} -- would ever run.
+     */
+    @Override
+    public void robotPeriodic() {
+        CommandScheduler.getInstance().run();
+    }
+
+    /** This autonomous runs the autonomous command selected by {@link RobotContainer}. */
+    @Override
+    public void autonomousInit() {
+        m_autonomousCommand = m_robotContainer.getAutonomousCommand();
+
+        if (m_autonomousCommand != null) {
+            m_autonomousCommand.schedule();
+        }
+    }
+
+    @Override
+    public void autonomousExit() {
+        if (m_autonomousCommand != null) {
+            m_autonomousCommand.cancel();
+        }
+    }
+
+    @Override
+    public void teleopInit() {
+        // This makes sure autonomous stops running when teleop starts. If you want
+        // autonomous to continue until interrupted by another command, remove this.
+        if (m_autonomousCommand != null) {
+            m_autonomousCommand.cancel();
+        }
+    }
+
+    @Override
+    public void testInit() {
+        // Cancels all running commands at the start of test mode.
+        CommandScheduler.getInstance().cancelAll();
+    }
+}
+```
+
+### src/main/java/frc/robot/RobotContainer.java
+
+```java
+package frc.robot;
+
+import static frc.robot.Constants.OperatorConstants.*;
+import static frc.robot.Constants.TriggerConstants.FIRE_TIMEOUT_SECONDS;
+
+import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
+import edu.wpi.first.wpilibj2.command.Command;
+import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
+import frc.robot.autonomous.AutoChooser;
+import frc.robot.commands.EjectCommand;
+import frc.robot.commands.FireCommand;
+import frc.robot.commands.IntakeCommand;
+import frc.robot.commands.LowerElevatorCommand;
+import frc.robot.commands.RaiseElevatorCommand;
+import frc.robot.commands.ResetGyroCommand;
+import frc.robot.commands.SpinUpShooterCommand;
+import frc.robot.commands.TeleopDriveCommand;
+import frc.robot.subsystems.DriveTrain;
+import frc.robot.subsystems.Elevator;
+import frc.robot.subsystems.Gripper;
+import frc.robot.subsystems.Shooter;
+import frc.robot.subsystems.Trigger;
+
+/**
+ * RobotContainer for the teaching-bot proof of concept.
+ *
+ * <p>Wires the five subsystems together, sets teleop default commands and button
+ * bindings, and builds the autonomous chooser. See README.md for the full
+ * controller-binding table and subsystem/command maps -- this file is meant to be read
+ * start-to-finish as the map of the whole robot.
+ */
+public class RobotContainer {
+
+    // `public final` fields (not `private`): unlike every subsystem/command field seen
+    // so far, these are deliberately visible outside this class -- Robot.java (and, in
+    // a JUnit test, a test class) needs to reach `robotContainer.drivetrain` directly
+    // to poke at simulated hardware. `final` still means each is assigned exactly once,
+    // right here in the constructor below.
+    public final DriveTrain drivetrain = new DriveTrain();
+    public final Shooter shooter = new Shooter();
+    public final Trigger trigger = new Trigger();
+    public final Elevator elevator = new Elevator();
+    public final Gripper gripper = new Gripper();
+
+    private final CommandXboxController driverController = new CommandXboxController(DRIVER_CONTROLLER_PORT);
+    private final CommandXboxController operatorController = new CommandXboxController(OPERATOR_CONTROLLER_PORT);
+
+    private final SendableChooser<Command> autoChooser;
+
+    /**
+     * {@code CommandXboxController} is the current, non-deprecated way to bind
+     * buttons to commands for an Xbox-style controller as of WPILib 2026 -- the same
+     * class name in both the Java and Python bindings (Python's is a thin wrapper
+     * around this very Java/C++ implementation, which is why the class names and
+     * method names on it already match almost exactly between the two languages,
+     * unlike REVLib/Phoenix6/Studica's separately-written Java and Python APIs).
+     */
+    public RobotContainer() {
+        configureDefaultCommands();
+        configureBindings();
+
+        autoChooser = AutoChooser.build(drivetrain);
+    }
+
+    private void configureDefaultCommands() {
+        // A subsystem's default command runs whenever no other command needs that
+        // subsystem -- here, that means "whenever the driver isn't running an
+        // autonomous/other DriveTrain command, tank drive from the sticks."
+        drivetrain.setDefaultCommand(new TeleopDriveCommand(drivetrain, driverController));
+    }
+
+    /**
+     * Configure button-to-command bindings.
+     *
+     * <p>Driver (port 0) -- drive only:
+     * <ul>
+     *   <li>Left Y / Right Y = tank drive</li>
+     *   <li>Back = reset gyro heading to 0 (do this before autonomous!)</li>
+     * </ul>
+     *
+     * <p>Operator (port 1) -- everything else:
+     * <ul>
+     *   <li>A = toggle shooter spin-up</li>
+     *   <li>B = fire trigger</li>
+     *   <li>X = gripper intake while held</li>
+     *   <li>Y = gripper eject while held</li>
+     *   <li>Right Bumper = raise elevator while held</li>
+     *   <li>Left Bumper = lower elevator while held</li>
+     * </ul>
+     *
+     * <p>Every binding below schedules a named Command class -- none of them build a
+     * command inline with a lambda, including the one-shot gyro reset (see
+     * ResetGyroCommand.java's docstring for why a one-shot action still gets a full
+     * class in this project).
+     */
+    private void configureBindings() {
+        driverController.back().onTrue(new ResetGyroCommand(drivetrain));
+
+        operatorController.a().toggleOnTrue(new SpinUpShooterCommand(shooter));
+
+        // FireCommand has no timeout of its own -- `.withTimeout()` is a decorator
+        // that wraps ANY command (see FireCommand.java's docstring), applied here at
+        // the one place this command is actually bound to a button, using the safety
+        // timeout defined in TriggerConstants.
+        operatorController.b().onTrue(new FireCommand(trigger).withTimeout(FIRE_TIMEOUT_SECONDS));
+
+        operatorController.x().whileTrue(new IntakeCommand(gripper));
+        operatorController.y().whileTrue(new EjectCommand(gripper));
+        operatorController.rightBumper().whileTrue(new RaiseElevatorCommand(elevator));
+        operatorController.leftBumper().whileTrue(new LowerElevatorCommand(elevator));
+    }
+
+    public Command getAutonomousCommand() {
+        return autoChooser.getSelected();
+    }
+}
+```
+
+### src/main/java/frc/robot/subsystems/DriveTrain.java
+
+```java
+package frc.robot.subsystems;
+
+import static frc.robot.Constants.DriveTrainConstants.*;
+import static frc.robot.Constants.METERS_PER_FOOT;
+
+import com.revrobotics.RelativeEncoder;
+import com.revrobotics.PersistMode;
+import com.revrobotics.ResetMode;
+import com.revrobotics.spark.SparkLowLevel.MotorType;
+import com.revrobotics.spark.SparkMax;
+import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
+import com.revrobotics.spark.config.SparkMaxConfig;
+import com.studica.frc.AHRS;
+
+import edu.wpi.first.math.MathUtil;
+import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.kinematics.ChassisSpeeds;
+import edu.wpi.first.math.kinematics.DifferentialDriveKinematics;
+import edu.wpi.first.math.kinematics.DifferentialDriveOdometry;
+import edu.wpi.first.math.kinematics.DifferentialDriveWheelSpeeds;
+import edu.wpi.first.wpilibj.drive.DifferentialDrive;
+import edu.wpi.first.wpilibj.smartdashboard.Field2d;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+import edu.wpi.first.wpilibj2.command.SubsystemBase;
+
+/**
+ * DriveTrain subsystem -- 6-wheel drop-center differential (tank) drive.
+ *
+ * <p>Teaching-bot proof of concept.
+ *
+ * <p>A <b>subsystem</b> in the WPILib command-based framework represents one physical
+ * mechanism and owns all the hardware objects for it (motor controllers, sensors). Its
+ * job is narrow on purpose: know how to DO things right now (spin the motors at a given
+ * power, report what a sensor currently reads) and nothing about WHEN or for HOW LONG
+ * to do them. That "when/how long" logic -- including anything with real state, like a
+ * PID loop -- lives in commands/, as explicit Command classes that call the plain
+ * methods defined below. See the README's "Where do commands live?" section for the
+ * full reasoning behind that split, and commands/ for this subsystem's four commands
+ * (teleop drive, drive-to-distance, turn-to-angle, reset gyro).
+ *
+ * <p>{@code extends SubsystemBase} is Java's equivalent of Python's
+ * {@code class DriveTrain(Subsystem):} -- {@code SubsystemBase} is the WPILib base
+ * class that registers this object with the CommandScheduler and gives it a default,
+ * do-nothing {@code periodic()} to override.
+ *
+ * <p>The {@code teaching-bot-poc-java} branch this one builds on stopped at raw
+ * encoder distances and a raw gyro heading -- no kinematics, no odometry. This branch
+ * adds {@code DifferentialDriveKinematics} (the math relating each wheel's own speed
+ * to the whole robot's speed/turn rate) and pure encoder+gyro dead reckoning via
+ * {@code DifferentialDriveOdometry} to track the robot's estimated (X, Y, heading)
+ * position on the field -- exactly the same two pieces, in the same order, that the
+ * Python sibling's {@code teaching-bot-odometry} branch adds to its own
+ * {@code DriveTrain}. Vision-based drift correction is a deliberate <i>next</i>
+ * lesson, not a starting one -- see the {@code teaching-bot-vision-java} branch.
+ */
+public class DriveTrain extends SubsystemBase {
+
+    // ---- Motor groupings: 2 physical motors per side, "lead" + "follower" ----
+    //
+    // Each side of the drivetrain has 2 NEO 2.0 motors, but we only want to give the
+    // software ONE number per side ("drive the left side at 50% power"), not have to
+    // command two motors separately and keep them in sync by hand. REV's SparkMax
+    // solves this with a lead/follower relationship, configured below in
+    // configureMotors(): the "follow" motor is told, once, "always match whatever the
+    // lead motor is doing" -- after that, our code only ever talks to the two LEAD
+    // motors. The two FOLLOW motors exist as Java objects here only so we can configure
+    // them once at startup; nothing in this file calls .set() or reads a sensor from a
+    // follower again after the constructor runs.
+    //
+    // `private final` on every hardware field below: `private` means only this class's
+    // own methods can reach it directly (an outside caller has to go through a public
+    // method like drive() or getLeftDistanceMeters() instead); `final` means the field
+    // is assigned exactly once -- here, right where it's declared -- and can never be
+    // reassigned to point at a different SparkMax object afterward. Unlike Python,
+    // where "private" is only the `_` naming convention this project's own style guide
+    // enforces, Java's `private` is a real access restriction the compiler checks.
+    private final SparkMax leftLead = new SparkMax(LEFT_LEAD_CAN_ID, MotorType.kBrushless);
+    private final SparkMax leftFollow = new SparkMax(LEFT_FOLLOW_CAN_ID, MotorType.kBrushless);
+    private final SparkMax rightLead = new SparkMax(RIGHT_LEAD_CAN_ID, MotorType.kBrushless);
+    private final SparkMax rightFollow = new SparkMax(RIGHT_FOLLOW_CAN_ID, MotorType.kBrushless);
+
+    // RelativeEncoder objects for the two lead motors. NEOs and NEO 2.0s both have a
+    // built-in encoder inside the motor -- no separate sensor to wire up, unlike
+    // Elevator's brushed Redline motor (see Elevator.java for that contrast).
+    // getEncoder() with no arguments returns the motor's built-in one.
+    //
+    // PACKAGE-PRIVATE (no access modifier at all), not `private`, and that's a
+    // deliberate exception to the `private` rule every other hardware field on this
+    // page follows. DriveTrainTest.java (in this same frc.robot.subsystems package)
+    // needs to poke these two objects' simulated position directly with
+    // `.setPosition(...)` to test odometry and the PID commands without a real robot --
+    // the Python sibling's equivalent test does the same thing by reaching past its
+    // `_left_encoder`'s leading-underscore naming CONVENTION, since Python has no
+    // enforced privacy to get past. Java's `private` is enforced by the compiler with
+    // no such loophole, so getting the same test access here needs an actual, coarser
+    // access level instead of a bypassable naming hint. Package-private is the
+    // narrowest level that still works: any class in frc.robot.subsystems can reach
+    // these fields, but nothing outside that package (including RobotContainer.java,
+    // in frc.robot) can -- a real, if slightly wider, restriction, not merely a polite
+    // request.
+    final RelativeEncoder leftEncoder = leftLead.getEncoder();
+    final RelativeEncoder rightEncoder = rightLead.getEncoder();
+
+    // The navX2 is a gyroscope (and more -- accelerometer, magnetometer) that plugs
+    // into the roboRIO's MXP port and reports over SPI. This is the only sensor on the
+    // robot that isn't a motor's built-in encoder or a simple digital switch, which is
+    // why it needs its own vendor library (Studica, imported above) instead of coming
+    // from `com.revrobotics` or core `edu.wpi.first.wpilibj`.
+    private final AHRS gyro = new AHRS(AHRS.NavXComType.kMXP_SPI);
+
+    // DifferentialDrive is a small WPILib helper that takes "how fast should the
+    // left/right side go" and turns that into calls on the two motors it wraps -- it
+    // does NOT know about the follower motors at all, because it doesn't need to
+    // (that's the whole point of having configured them to follow, below).
+    private final DifferentialDrive driver = new DifferentialDrive(leftLead, rightLead);
+
+    // ---- Kinematics and odometry ----
+    //
+    // DifferentialDriveKinematics only needs one number -- the track width
+    // (left-to-right wheel spacing) -- to convert between "each wheel's own speed" and
+    // "the whole robot's forward speed and turn rate" (a ChassisSpeeds). It doesn't
+    // track anything over time by itself; getChassisSpeeds() below is the only place
+    // this project currently uses it.
+    private final DifferentialDriveKinematics kinematics = new DifferentialDriveKinematics(TRACK_WIDTH_METERS);
+
+    // DifferentialDriveOdometry is the part that actually accumulates position OVER
+    // TIME. Every loop, periodic() below feeds it the current gyro heading and both
+    // encoder distances, and it integrates those into a running pose estimate -- dead
+    // reckoning, the same technique ships have used for centuries: no outside
+    // reference, just "I know my heading and how far each wheel has turned, so here's
+    // where I must be now." Constructed here with the encoders already zeroed (see
+    // configureMotors() below, called from the constructor before this field is
+    // initialized) and the gyro's current heading, starting pose defaulted to
+    // Pose2d() (X=0, Y=0, heading=0) -- a stand-in field origin until resetPose() sets
+    // a real one.
+    private final DifferentialDriveOdometry odometry;
+
+    // Field2d is a Shuffleboard/Glass widget that draws the robot as an icon on a
+    // picture of the field, at whatever pose you last gave it -- registered once in
+    // the constructor (not every loop) so Shuffleboard doesn't see it
+    // appear/disappear/duplicate.
+    private final Field2d field = new Field2d();
+
+    // Used by periodic() below to only publish telemetry every Nth loop instead of
+    // every ~20ms -- SmartDashboard/NetworkTables traffic adds up, and nothing reads
+    // these values fast enough to need them every single loop. Not `final`: this one
+    // field IS reassigned, every loop, in periodic() below.
+    private int telemetryLoopCounter = 0;
+
+    /**
+     * The constructor -- Java calls this automatically for {@code new DriveTrain()}.
+     * Unlike every command class in this project (see commands/TeleopDriveCommand.java
+     * for the full explanation of constructor syntax), this constructor takes no
+     * parameters at all: DriveTrain doesn't need anything handed to it from the
+     * outside to build itself, since every value it needs (CAN IDs, current limits)
+     * comes from {@code Constants.DriveTrainConstants} instead.
+     *
+     * <p>{@code odometry} is assigned here, in the constructor BODY, rather than
+     * inline at its field declaration the way {@code kinematics} and {@code field}
+     * are above -- it's the one field whose initial value depends on calling
+     * {@code getHeadingDegrees()}/{@code getLeftDistanceMeters()}/
+     * {@code getRightDistanceMeters()}, which in turn need {@code configureMotors()}
+     * to have already zeroed the encoders. Java runs field initializers and the
+     * constructor body in the order they're written, top to bottom, so
+     * {@code configureMotors()} has to be called first, right here, before
+     * {@code odometry} can be built from a known-zero starting state.
+     */
+    public DriveTrain() {
+        configureMotors();
+
+        odometry = new DifferentialDriveOdometry(
+            Rotation2d.fromDegrees(getHeadingDegrees()),
+            getLeftDistanceMeters(),
+            getRightDistanceMeters()
+        );
+
+        SmartDashboard.putData("Field", field);
+    }
+
+    /**
+     * One-time SparkMax setup for all 4 drive motors, called once from the
+     * constructor. Nothing in here runs again after startup. {@code private}: this is
+     * an internal implementation detail, never meant to be called from outside this
+     * class -- unlike {@code drive()}/{@code stop()}/the getters below, which are
+     * {@code public} because commands need to call them.
+     */
+    private void configureMotors() {
+        // A SparkMaxConfig object describes a full desired configuration; it doesn't
+        // take effect until passed to .configure(). This "build a config object, then
+        // apply it" two-step (rather than one call per setting) is REVLib's pattern for
+        // every SparkMax on this robot -- identical in Java and Python, just with
+        // camelCase method names either way (REVLib's Java API was never snake_cased).
+        //
+        // positionConversionFactor/velocityConversionFactor rescale the raw "motor
+        // shaft rotations" the encoder actually measures into "meters the robot has
+        // driven" -- multiplying by wheel circumference accounts for one wheel
+        // rotation = one circumference of travel, and dividing by the gear ratio
+        // accounts for the motor spinning GEAR_RATIO times for every one wheel
+        // rotation. Only the LEAD motors' encoders are configured this way, since those
+        // are the only encoders this code ever reads (see the field comments above).
+        double conversionFactor = WHEEL_CIRCUMFERENCE_METERS / GEAR_RATIO;
+
+        // Right lead. inverted(true) because of how the gearboxes are mounted: a
+        // physically-mirrored drivetrain means the left and right gearboxes spin
+        // opposite directions for "both sides forward," so exactly one side needs its
+        // sign flipped in software.
+        SparkMaxConfig rightLeadConfig = new SparkMaxConfig();
+        rightLeadConfig.inverted(true);
+        rightLeadConfig.idleMode(IdleMode.kCoast);
+        rightLeadConfig.smartCurrentLimit(CURRENT_LIMIT);
+        rightLeadConfig.encoder.positionConversionFactor(conversionFactor);
+        rightLeadConfig.encoder.velocityConversionFactor(conversionFactor / 60.0);
+        rightLead.configure(rightLeadConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
+
+        // Left lead -- same idea, not inverted.
+        SparkMaxConfig leftLeadConfig = new SparkMaxConfig();
+        leftLeadConfig.inverted(false);
+        leftLeadConfig.idleMode(IdleMode.kCoast);
+        leftLeadConfig.smartCurrentLimit(CURRENT_LIMIT);
+        leftLeadConfig.encoder.positionConversionFactor(conversionFactor);
+        leftLeadConfig.encoder.velocityConversionFactor(conversionFactor / 60.0);
+        leftLead.configure(leftLeadConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
+
+        // Follow motors: `.follow(leadMotor)` is the whole configuration -- this one
+        // call is what makes "command the lead, the follower copies it" happen. No
+        // encoder conversion factors here, because this code never reads a follower's
+        // encoder (see the field comments above).
+        SparkMaxConfig leftFollowConfig = new SparkMaxConfig();
+        leftFollowConfig.follow(leftLead);
+        leftFollowConfig.idleMode(IdleMode.kCoast);
+        leftFollowConfig.smartCurrentLimit(CURRENT_LIMIT);
+        leftFollow.configure(leftFollowConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
+
+        SparkMaxConfig rightFollowConfig = new SparkMaxConfig();
+        rightFollowConfig.follow(rightLead);
+        rightFollowConfig.idleMode(IdleMode.kCoast);
+        rightFollowConfig.smartCurrentLimit(CURRENT_LIMIT);
+        rightFollow.configure(rightFollowConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
+
+        // Start both encoders at exactly 0 meters traveled. Without this, whatever the
+        // encoder happened to read when the robot was last powered off would carry
+        // over.
+        leftEncoder.setPosition(0);
+        rightEncoder.setPosition(0);
+    }
+
+    // ---- Plain hardware actions (no scheduling, no state machines) ----
+    //
+    // Everything below is intentionally "dumb": each method does exactly one thing to
+    // the hardware, right now, and returns. Commands (in commands/) call these
+    // repeatedly, in whatever pattern they need, to build actual robot behavior over
+    // time.
+
+    /**
+     * Tank-drives at the given left/right duty cycles, each in [-1, 1].
+     * {@code MathUtil.applyDeadband} zeroes out small values -- without it, a joystick
+     * that doesn't return to <i>exactly</i> 0.0 when released would creep the robot.
+     *
+     * @param left left-side duty cycle, [-1, 1]
+     * @param right right-side duty cycle, [-1, 1]
+     */
+    public void drive(double left, double right) {
+        driver.tankDrive(
+            MathUtil.applyDeadband(left, JOYSTICK_DEADBAND),
+            MathUtil.applyDeadband(right, JOYSTICK_DEADBAND)
+        );
+    }
+
+    public void stop() {
+        driver.stopMotor();
+    }
+
+    // ---- Sensors ----
+    //
+    // These all return SI units (meters, meters/second, degrees for angle -- there's
+    // no "imperial degrees") even though nothing else in FRC is metric. That's
+    // deliberate: WPILib's own math expects meters, so keeping this subsystem's
+    // internal numbers in meters means it can be handed directly to kinematics/PID
+    // code without a conversion at every call site. The conversion to feet (for
+    // humans) happens in exactly two places: this file's periodic() telemetry, and
+    // commands/DriveDistanceCommand.java's constructor, which is the one place a "how
+    // many feet" number enters this subsystem from the outside.
+
+    public double getLeftDistanceMeters() {
+        return leftEncoder.getPosition();
+    }
+
+    public double getRightDistanceMeters() {
+        return rightEncoder.getPosition();
+    }
+
+    public double getAverageDistanceMeters() {
+        return (getLeftDistanceMeters() + getRightDistanceMeters()) / 2.0;
+    }
+
+    public double getLeftVelocityMetersPerSecond() {
+        return leftEncoder.getVelocity();
+    }
+
+    public double getRightVelocityMetersPerSecond() {
+        return rightEncoder.getVelocity();
+    }
+
+    public void resetEncoders() {
+        leftEncoder.setPosition(0);
+        rightEncoder.setPosition(0);
+    }
+
+    public double getHeadingDegrees() {
+        // Negated for CCW-positive: the navX reports clockwise-positive by default,
+        // but WPILib's convention (and this codebase's) is counterclockwise-positive,
+        // so every raw reading gets flipped right here -- the one place that has to
+        // know about that mismatch.
+        return -gyro.getAngle();
+    }
+
+    public void resetGyro() {
+        gyro.reset();
+    }
+
+    public DifferentialDriveWheelSpeeds getWheelSpeeds() {
+        return new DifferentialDriveWheelSpeeds(getLeftVelocityMetersPerSecond(), getRightVelocityMetersPerSecond());
+    }
+
+    /**
+     * The whole robot's forward speed (m/s) and turn rate (rad/s), computed from the
+     * two wheel speeds via {@code DifferentialDriveKinematics}. Nothing in this
+     * project currently drives from this -- it's here as the other half of what
+     * kinematics is for, alongside odometry.
+     */
+    public ChassisSpeeds getChassisSpeeds() {
+        return kinematics.toChassisSpeeds(getWheelSpeeds());
+    }
+
+    // ---- Pose (odometry) ----
+    //
+    // getPose() is DriveTrain's best current estimate of where the robot is on the
+    // field, as a Pose2d (X meters, Y meters, heading). It's built entirely on
+    // encoder+gyro dead reckoning -- nothing corrects this against reality yet (see
+    // the class-level doc comment above for why that's a deliberate next lesson, not
+    // a gap in this branch).
+
+    public Pose2d getPose() {
+        return odometry.getPoseMeters();
+    }
+
+    /**
+     * Tells odometry "the robot is actually at this pose right now" -- used once at
+     * the start of autonomous once a starting position is known. Resets the encoders
+     * too: distance is measured <i>since the last reset</i>, so an old encoder reading
+     * and a freshly reset pose would disagree about where "zero" is.
+     */
+    public void resetPose(Pose2d pose) {
+        resetEncoders();
+        odometry.resetPosition(Rotation2d.fromDegrees(getHeadingDegrees()), 0.0, 0.0, pose);
+    }
+
+    /**
+     * {@code @Override} tells the compiler "this method is meant to replace a method
+     * of the same name/signature on the parent class ({@code SubsystemBase})" -- if a
+     * typo meant this didn't actually match anything on the parent (e.g.
+     * {@code periodc()}), the compiler would flag it as an error instead of silently
+     * creating an unrelated new method that never gets called. {@code periodic()} runs
+     * every ~20ms for every subsystem, whether or not a command is currently using it
+     * -- this is the right place for "always keep this updated" bookkeeping like
+     * telemetry, as opposed to logic that should only happen while a specific command
+     * is active (that belongs in that command's {@code execute()}).
+     */
+    @Override
+    public void periodic() {
+        // Odometry has to be fed every single loop, not just on the slower telemetry
+        // schedule below -- skipping updates would mean missing however much the
+        // robot moved during the skipped loops, which is exactly the kind of small,
+        // silent error that makes dead-reckoned position drift over a match.
+        odometry.update(Rotation2d.fromDegrees(getHeadingDegrees()), getLeftDistanceMeters(), getRightDistanceMeters());
+        field.setRobotPose(getPose());
+
+        telemetryLoopCounter++;
+        if (telemetryLoopCounter >= TELEMETRY_PERIOD_LOOPS) {
+            telemetryLoopCounter = 0;
+            // Dashboard values are published in feet and feet/sec -- the units a
+            // human glancing at Shuffleboard actually thinks in -- even though
+            // everything above this point works in meters.
+            SmartDashboard.putNumber("DriveTrain/LeftDistFeet", getLeftDistanceMeters() / METERS_PER_FOOT);
+            SmartDashboard.putNumber("DriveTrain/RightDistFeet", getRightDistanceMeters() / METERS_PER_FOOT);
+            SmartDashboard.putNumber("DriveTrain/LeftVelocityFPS", getLeftVelocityMetersPerSecond() / METERS_PER_FOOT);
+            SmartDashboard.putNumber("DriveTrain/RightVelocityFPS", getRightVelocityMetersPerSecond() / METERS_PER_FOOT);
+            SmartDashboard.putNumber("DriveTrain/HeadingDeg", getHeadingDegrees());
+            Pose2d pose = getPose();
+            SmartDashboard.putNumber("DriveTrain/PoseXFeet", pose.getX() / METERS_PER_FOOT);
+            SmartDashboard.putNumber("DriveTrain/PoseYFeet", pose.getY() / METERS_PER_FOOT);
+        }
+    }
+}
+```
+
+### src/main/java/frc/robot/subsystems/Elevator.java
+
+```java
+package frc.robot.subsystems;
+
+import static frc.robot.Constants.ElevatorConstants.*;
+
+import com.revrobotics.PersistMode;
+import com.revrobotics.ResetMode;
+import com.revrobotics.spark.SparkLowLevel.MotorType;
+import com.revrobotics.spark.SparkMax;
+import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
+import com.revrobotics.spark.config.SparkMaxConfig;
+
+import edu.wpi.first.wpilibj.DigitalInput;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+import edu.wpi.first.wpilibj2.command.SubsystemBase;
+
+/**
+ * Elevator subsystem -- 2-stage single-mast elevator (AndyMark "Elevator in a Box"
+ * style cascade rig), spring-assisted extension, motor+rope retraction.
+ *
+ * <p>Teaching-bot proof of concept. The Redline motor here is brushed and has no
+ * encoder (a real one could add a through-bore/versa encoder later for closed-loop
+ * positioning -- see README) -- this subsystem is entirely open-loop, driven only by a
+ * limit switch at each end of travel. Raising needs less motor power because the
+ * springs are doing most of the work; lowering needs the motor to actively pull the
+ * rope in against that same spring tension.
+ *
+ * <p>This subsystem only exposes plain actions (raise/lower a notch, stop, check the
+ * limit switches) -- the "keep raising/lowering while a button is held, but always stop
+ * at a limit switch even if the button is still held" behavior lives in
+ * commands/RaiseElevatorCommand.java and commands/LowerElevatorCommand.java.
+ */
+public class Elevator extends SubsystemBase {
+
+    // kBrushed, not kBrushless: a Redline motor has physical brushes (hence the name)
+    // and no built-in encoder, unlike every NEO in this project. SparkMax can drive
+    // either motor type, but has to be told which one it's talking to, since brushed
+    // and brushless motors are commutated (have their windings energized in sequence)
+    // completely differently in hardware.
+    private final SparkMax liftMotor = new SparkMax(LIFT_MOTOR_ID, MotorType.kBrushed);
+
+    private final DigitalInput topLimitSwitch = new DigitalInput(TOP_LIMIT_SWITCH_DIO_PORT);
+    private final DigitalInput bottomLimitSwitch = new DigitalInput(BOTTOM_LIMIT_SWITCH_DIO_PORT);
+
+    public Elevator() {
+        SparkMaxConfig liftConfig = new SparkMaxConfig();
+        liftConfig.inverted(LIFT_MOTOR_INVERTED);
+        liftConfig.idleMode(IdleMode.kBrake);
+        liftConfig.smartCurrentLimit(LIFT_CURRENT_LIMIT);
+        liftMotor.configure(liftConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
+    }
+
+    public boolean isAtTop() {
+        boolean raw = topLimitSwitch.get();
+        return TOP_LIMIT_SWITCH_INVERTED ? !raw : raw;
+    }
+
+    public boolean isAtBottom() {
+        boolean raw = bottomLimitSwitch.get();
+        return BOTTOM_LIMIT_SWITCH_INVERTED ? !raw : raw;
+    }
+
+    /** speed is a duty cycle in [-1, 1]: positive raises, negative lowers -- see
+     * {@code ElevatorConstants.RAISE_SPEED}/{@code LOWER_SPEED}. */
+    public void setSpeed(double speed) {
+        liftMotor.set(speed);
+    }
+
+    public void stop() {
+        liftMotor.set(0.0);
+    }
+
+    @Override
+    public void periodic() {
+        SmartDashboard.putBoolean("Elevator/AtTop", isAtTop());
+        SmartDashboard.putBoolean("Elevator/AtBottom", isAtBottom());
+    }
+}
+```
+
+### src/main/java/frc/robot/subsystems/Gripper.java
+
+```java
+package frc.robot.subsystems;
+
+import static frc.robot.Constants.GripperConstants.*;
+
+import com.revrobotics.PersistMode;
+import com.revrobotics.ResetMode;
+import com.revrobotics.spark.SparkLowLevel.MotorType;
+import com.revrobotics.spark.SparkMax;
+import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
+import com.revrobotics.spark.config.SparkMaxConfig;
+
+import edu.wpi.first.wpilibj2.command.SubsystemBase;
+
+/**
+ * Gripper subsystem -- spinning roller intake at the end of the elevator.
+ *
+ * <p>Teaching-bot proof of concept. The simplest subsystem here: one motor, no sensors
+ * at all. {@code setSpeed()}/{@code stop()} are the only two things it knows how to do
+ * -- commands/IntakeCommand.java and commands/EjectCommand.java just pick which speed
+ * to hold while a button is pressed.
+ */
+public class Gripper extends SubsystemBase {
+
+    private final SparkMax rollerMotor = new SparkMax(ROLLER_MOTOR_ID, MotorType.kBrushless);
+
+    /**
+     * No parameters besides the implicit {@code this} here -- Gripper doesn't need
+     * anything handed to it from the outside to build itself; every value it needs
+     * (motor CAN ID, current limit, ...) comes from {@code GripperConstants} instead.
+     * Compare this to commands/IntakeCommand.java's constructor, which DOES take a
+     * parameter ({@code Gripper gripper}) because a command needs to be told WHICH
+     * Gripper object to act on.
+     */
+    public Gripper() {
+        SparkMaxConfig rollerConfig = new SparkMaxConfig();
+        rollerConfig.inverted(ROLLER_MOTOR_INVERTED);
+        rollerConfig.idleMode(IdleMode.kBrake);
+        rollerConfig.smartCurrentLimit(ROLLER_CURRENT_LIMIT);
+        rollerMotor.configure(rollerConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
+    }
+
+    /**
+     * {@code speed} is a duty cycle in [-1, 1]: positive intakes, negative ejects -- see
+     * {@code GripperConstants.INTAKE_SPEED}/{@code EJECT_SPEED}. The parameter is
+     * written {@code double speed} rather than {@code speed: float} the way Python
+     * wrote it -- Java always puts the type BEFORE the name, with no colon, for every
+     * parameter and every field in this project; Python puts the type AFTER the name,
+     * with a colon, and only when someone chooses to add the (optional) hint.
+     */
+    public void setSpeed(double speed) {
+        rollerMotor.set(speed);
+    }
+
+    public void stop() {
+        rollerMotor.set(0.0);
+    }
+}
+```
+
+### src/main/java/frc/robot/subsystems/Shooter.java
+
+```java
+package frc.robot.subsystems;
+
+import static frc.robot.Constants.ShooterConstants.*;
+
+import com.ctre.phoenix6.StatusCode;
+import com.ctre.phoenix6.configs.CurrentLimitsConfigs;
+import com.ctre.phoenix6.configs.MotorOutputConfigs;
+import com.ctre.phoenix6.configs.Slot0Configs;
+import com.ctre.phoenix6.configs.TalonFXConfiguration;
+import com.ctre.phoenix6.controls.NeutralOut;
+import com.ctre.phoenix6.controls.VelocityVoltage;
+import com.ctre.phoenix6.hardware.TalonFX;
+import com.ctre.phoenix6.signals.InvertedValue;
+import com.ctre.phoenix6.signals.NeutralModeValue;
+
+import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+import edu.wpi.first.wpilibj2.command.SubsystemBase;
+
+/**
+ * Shooter subsystem -- single flywheel (Kraken/TalonFX), fixed target RPM.
+ *
+ * <p>Teaching-bot proof of concept. Simpler than the competition bot's Shooter: no
+ * distance-based RPM table (no vision on this robot) -- just a single configurable
+ * target speed. Demonstrates Phoenix 6's velocity-control pattern.
+ *
+ * <p>Unlike REVLib and Studica's Java bindings, whose method names read almost
+ * identically to their Python counterparts (just camelCase instead of snake_case),
+ * Phoenix 6's Java enum constant names use their own capitalization
+ * ({@code InvertedValue.Clockwise_Positive}) that differs even in capitalization
+ * convention from the same enum in Python ({@code InvertedValue.CLOCKWISE_POSITIVE})
+ * -- CTRE's Java and Python bindings were written somewhat independently. Worth noting
+ * explicitly the first time a rookie moving between this Java project and its Python
+ * sibling hits it.
+ *
+ * <p>Like the other subsystems, this file only exposes plain hardware actions
+ * ({@code setTargetRpm()}, {@code stop()}, the getters) -- the actual Command that uses
+ * them lives in commands/SpinUpShooterCommand.java.
+ */
+public class Shooter extends SubsystemBase {
+
+    // VelocityVoltage and NeutralOut are "control request" objects: instead of calling
+    // a method with new arguments every loop (like SparkMax's .set()), Phoenix 6 wants
+    // you to build one request object per control mode and re-send it (via
+    // setControl(), below) whenever you want to change or refresh what the motor is
+    // doing. withSlot(0) picks which of the TalonFX's internal PID gain slots
+    // (configured below as slot 0) this velocity request should use.
+    private final VelocityVoltage velocityRequest = new VelocityVoltage(0).withSlot(0);
+    private final NeutralOut neutralRequest = new NeutralOut();
+
+    private double targetRpm = 0.0;
+
+    private final TalonFX flywheelMotor = new TalonFX(FLYWHEEL_MOTOR_ID);
+
+    public Shooter() {
+        // Phoenix 6 configuration is one big object built up with chained
+        // `.with*()` calls (each one returns the same object back, which is what lets
+        // them chain), then applied in one shot via getConfigurator().apply() below --
+        // REVLib's SparkMaxConfig from DriveTrain/Trigger/Elevator/Gripper is the same
+        // "build a config object, then apply it" idea, just with REV's own
+        // method-naming style instead of CTRE's.
+        TalonFXConfiguration flywheelConfig = new TalonFXConfiguration()
+            .withMotorOutput(new MotorOutputConfigs()
+                .withNeutralMode(NeutralModeValue.Coast)
+                .withInverted(FLYWHEEL_INVERTED
+                    ? InvertedValue.Clockwise_Positive
+                    : InvertedValue.CounterClockwise_Positive))
+            .withCurrentLimits(new CurrentLimitsConfigs()
+                .withStatorCurrentLimit(CURRENT_LIMIT)
+                .withStatorCurrentLimitEnable(true))
+            .withSlot0(
+                // Slot0Configs holds the PID(+velocity feedforward) gains the TalonFX
+                // itself uses to run its OWN closed velocity loop, in hardware, every
+                // control cycle -- much faster than this Java code's ~20ms loop could.
+                // This is different from DriveTrain's PID commands, which run the PID
+                // math in Java and only send a duty cycle to the motor.
+                new Slot0Configs()
+                    .withKP(SHOOTER_KP)
+                    .withKI(SHOOTER_KI)
+                    .withKD(SHOOTER_KD)
+                    .withKV(SHOOTER_KV));
+
+        StatusCode configError = flywheelMotor.getConfigurator().apply(flywheelConfig);
+        if (!configError.isOK()) {
+            DriverStation.reportWarning("Shooter flywheel motor config failed: " + configError, false);
+        }
+    }
+
+    /**
+     * Commands the flywheel to spin at {@code rpm}. Because this is a closed-loop
+     * velocity request handled on the TalonFX itself (see the Slot0Configs comment
+     * above), this only needs to be called once when the target changes -- not every
+     * loop like an open-loop duty cycle motor would need.
+     */
+    public void setTargetRpm(double rpm) {
+        targetRpm = rpm;
+        flywheelMotor.setControl(velocityRequest.withVelocity(rpm / FLYWHEEL_GEAR_RATIO / 60.0));
+    }
+
+    public void stop() {
+        targetRpm = 0.0;
+        flywheelMotor.setControl(neutralRequest);
+    }
+
+    public double getCurrentRpm() {
+        return flywheelMotor.getVelocity().getValueAsDouble() * 60.0 * FLYWHEEL_GEAR_RATIO;
+    }
+
+    public boolean isAtTargetSpeed() {
+        return targetRpm > 0 && Math.abs(getCurrentRpm() - targetRpm) <= RPM_TOLERANCE;
+    }
+
+    @Override
+    public void periodic() {
+        // RPM has no separate "imperial" form the way a distance does, so unlike
+        // DriveTrain's telemetry there's no unit conversion to do here.
+        SmartDashboard.putNumber("Shooter/CurrentRPM", getCurrentRpm());
+        SmartDashboard.putNumber("Shooter/TargetRPM", targetRpm);
+        SmartDashboard.putBoolean("Shooter/AtSpeed", isAtTargetSpeed());
+    }
+}
+```
+
+### src/main/java/frc/robot/subsystems/Trigger.java
+
+```java
+package frc.robot.subsystems;
+
+import static frc.robot.Constants.TriggerConstants.*;
+
+import com.revrobotics.PersistMode;
+import com.revrobotics.ResetMode;
+import com.revrobotics.spark.SparkLowLevel.MotorType;
+import com.revrobotics.spark.SparkMax;
+import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
+import com.revrobotics.spark.config.SparkMaxConfig;
+
+import edu.wpi.first.wpilibj.DigitalInput;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+import edu.wpi.first.wpilibj2.command.SubsystemBase;
+
+/**
+ * Trigger subsystem -- small NEO-driven cam that flicks a game piece into the shooter.
+ *
+ * <p>Teaching-bot proof of concept. The cam has exactly one sensor: a limit switch that
+ * defines its rest ("home") position. This subsystem only exposes plain actions/queries
+ * (run the cam motor, read the switch/beam breaks) -- the "run until it's fired one
+ * full revolution" logic is real state-machine behavior, so it lives in its own Command
+ * class, commands/FireCommand.java, rather than here.
+ */
+public class Trigger extends SubsystemBase {
+
+    private final SparkMax camMotor = new SparkMax(CAM_MOTOR_ID, MotorType.kBrushless);
+
+    // DigitalInput reads a single digital (on/off) signal from a roboRIO DIO port --
+    // the same class WPILib uses for any simple switch or break-beam sensor, since
+    // electrically they're the same thing (a circuit that's either open or closed).
+    private final DigitalInput limitSwitch = new DigitalInput(LIMIT_SWITCH_DIO_PORT);
+    private final DigitalInput beamBreak1 = new DigitalInput(BEAM_BREAK_1_DIO_PORT);
+    private final DigitalInput beamBreak2 = new DigitalInput(BEAM_BREAK_2_DIO_PORT);
+
+    public Trigger() {
+        SparkMaxConfig camConfig = new SparkMaxConfig();
+        camConfig.inverted(CAM_MOTOR_INVERTED);
+        // Brake mode (not DriveTrain's Coast): when the cam motor is commanded to 0, we
+        // want it to stop and hold position immediately, not coast -- an idle cam
+        // swinging freely could drift off "home" and throw off the next fire cycle's
+        // home-switch reading.
+        camConfig.idleMode(IdleMode.kBrake);
+        camConfig.smartCurrentLimit(CAM_CURRENT_LIMIT);
+        camMotor.configure(camConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
+    }
+
+    /**
+     * Every switch/beam-break getter here follows the same shape: read the raw
+     * electrical signal, then flip it if that particular sensor's wiring reports
+     * {@code true} for the opposite of what we mean (see the {@code *_INVERTED}
+     * constants and their TODOs -- this is exactly the kind of thing that must be
+     * checked on the real robot, since guessing wrong here silently inverts the
+     * sensor's meaning). {@code cond ? a : b} is Java's ternary operator -- "if cond is
+     * true, this whole expression's value is a, otherwise it's b" -- the closest Java
+     * equivalent to Python's {@code a if cond else b}.
+     */
+    public boolean isAtHome() {
+        boolean raw = limitSwitch.get();
+        return LIMIT_SWITCH_INVERTED ? !raw : raw;
+    }
+
+    public boolean hasBallAtStage1() {
+        boolean raw = beamBreak1.get();
+        return BEAM_BREAK_1_INVERTED ? !raw : raw;
+    }
+
+    public boolean hasBallAtStage2() {
+        boolean raw = beamBreak2.get();
+        return BEAM_BREAK_2_INVERTED ? !raw : raw;
+    }
+
+    public void runCam() {
+        camMotor.set(CAM_FIRE_SPEED);
+    }
+
+    public void stopCam() {
+        camMotor.set(0.0);
+    }
+
+    @Override
+    public void periodic() {
+        SmartDashboard.putBoolean("Trigger/AtHome", isAtHome());
+        SmartDashboard.putBoolean("Trigger/BallStage1", hasBallAtStage1());
+        SmartDashboard.putBoolean("Trigger/BallStage2", hasBallAtStage2());
+    }
+}
+```
+
+### src/main/java/frc/robot/commands/DriveDistanceCommand.java
+
+```java
+package frc.robot.commands;
+
+import static frc.robot.Constants.DriveTrainConstants.*;
+import static frc.robot.Constants.METERS_PER_FOOT;
+
+import edu.wpi.first.math.controller.PIDController;
+import edu.wpi.first.wpilibj2.command.Command;
+import frc.robot.subsystems.DriveTrain;
+
+/**
+ * Drives straight to a target distance, given in FEET, using a PID loop on the average
+ * of the two drive encoders.
+ *
+ * <p>Why PID instead of "drive at a fixed speed until the encoder says you're far
+ * enough" (this command's first version): a fixed speed either overshoots -- the
+ * motors are still at full speed right up to the exact instant the target is crossed,
+ * so the robot coasts/slams past it -- or forces someone to guess a "stop early to
+ * leave room for coasting" fudge factor. A PID controller instead recalculates "how
+ * hard should I push" every loop from how much distance is left, so the commanded
+ * speed naturally tapers off as the target gets close instead of being all full power
+ * then all stop.
+ */
+public class DriveDistanceCommand extends Command {
+
+    private final DriveTrain drivetrain;
+    // `double targetDistanceMeters` and `PIDController pid` are both computed/built in
+    // the constructor and then never reassigned, so both could be declared `final`
+    // exactly like `drivetrain` above -- they're written without `final` here only
+    // because the constructor computes/builds them from a parameter rather than
+    // receiving them directly, which is a distinction of readability preference, not
+    // one Java's compiler cares about.
+    private final double targetDistanceMeters;
+    private final PIDController pid;
+
+    /**
+     * {@code double distanceFeet} -- the same {@code name: type} idea as every other
+     * parameter in this project, just using one of Java's built-in primitive types
+     * ({@code double}, a 64-bit decimal number) instead of a class like
+     * {@code DriveTrain}. Feet-to-meters conversion happens exactly once, right here,
+     * at the boundary where a "human" feet value enters this command -- see
+     * {@code Constants.METERS_PER_FOOT}.
+     */
+    public DriveDistanceCommand(DriveTrain drivetrain, double distanceFeet) {
+        this.drivetrain = drivetrain;
+        this.targetDistanceMeters = distanceFeet * METERS_PER_FOOT;
+        addRequirements(drivetrain);
+
+        pid = new PIDController(DRIVE_DISTANCE_KP, DRIVE_DISTANCE_KI, DRIVE_DISTANCE_KD);
+        pid.setTolerance(DRIVE_DISTANCE_TOLERANCE_METERS);
+    }
+
+    @Override
+    public void initialize() {
+        // initialize() runs exactly once, the instant this command is scheduled (not
+        // when it's constructed, which for autonomous commands happens once at
+        // RobotContainer startup, possibly minutes before the command actually runs).
+        // Zeroing the encoders and the PID controller here means "distance driven" is
+        // always measured from wherever the robot happens to be right now.
+        drivetrain.resetEncoders();
+        pid.reset();
+        pid.setSetpoint(targetDistanceMeters);
+    }
+
+    @Override
+    public void execute() {
+        // PIDController.calculate(measurement) returns "how hard to push" based on the
+        // error between `measurement` and the setpoint given in initialize(). It's
+        // clamped to +/-DRIVE_DISTANCE_MAX_OUTPUT as a second, independent safety
+        // margin on top of tuning KP conservatively -- a large distance error
+        // (commanding 10 feet from a dead stop) should never be able to demand more
+        // than that fraction of full power.
+        double output = pid.calculate(drivetrain.getAverageDistanceMeters());
+        output = Math.max(-DRIVE_DISTANCE_MAX_OUTPUT, Math.min(DRIVE_DISTANCE_MAX_OUTPUT, output));
+        drivetrain.drive(output, output);
+    }
+
+    @Override
+    public boolean isFinished() {
+        return pid.atSetpoint();
+    }
+
+    /**
+     * {@code boolean interrupted} -- the CommandScheduler fills this parameter in for
+     * you: {@code true} if this command got cut off early (the driver grabbed the
+     * joystick mid-autonomous, the match ended, the robot got disabled), {@code false}
+     * if {@code isFinished()} returned {@code true} on its own. {@code end()} runs
+     * exactly once either way, which is exactly why stopping the motors belongs here
+     * rather than only handling the "finished normally" path -- this command doesn't
+     * need to tell the two cases apart, but {@code end()} always receives this
+     * parameter regardless of whether a command reads it.
+     */
+    @Override
+    public void end(boolean interrupted) {
+        drivetrain.stop();
+    }
+}
+```
+
+### src/main/java/frc/robot/commands/EjectCommand.java
+
+```java
+package frc.robot.commands;
+
+import static frc.robot.Constants.GripperConstants.*;
+
+import edu.wpi.first.wpilibj2.command.Command;
+import frc.robot.subsystems.Gripper;
+
+/** Same shape as IntakeCommand.java, opposite direction -- see that file for the full
+ * explanation of this class's constructor and lifecycle methods. */
+public class EjectCommand extends Command {
+
+    private final Gripper gripper;
+
+    public EjectCommand(Gripper gripper) {
+        this.gripper = gripper;
+        addRequirements(gripper);
+    }
+
+    @Override
+    public void execute() {
+        gripper.setSpeed(EJECT_SPEED);
+    }
+
+    @Override
+    public boolean isFinished() {
+        return false;
+    }
+
+    @Override
+    public void end(boolean interrupted) {
+        gripper.stop();
+    }
+}
+```
+
+### src/main/java/frc/robot/commands/FireCommand.java
+
+```java
+package frc.robot.commands;
+
+import edu.wpi.first.wpilibj2.command.Command;
+import frc.robot.subsystems.Trigger;
+
+/**
+ * FireCommand is the one genuinely tricky piece of logic in this whole codebase, and
+ * it's a good example of why "just read the one sensor" isn't always enough: the cam
+ * has exactly one sensor, a limit switch at "home," and reading it once at the start
+ * would immediately (and wrongly) report "done," since the cam starts each fire cycle
+ * already at home. A full fire cycle actually means: leave home, THEN come back to
+ * home. {@code isFinished()} below tracks that as one bit of state,
+ * {@code hasLeftHome}, which is reset every time this command starts over in
+ * {@code initialize()}.
+ *
+ * <p>This class does NOT set its own timeout. A jammed cam or a broken switch wire
+ * means it would never see "returned home" and would run forever on its own; the
+ * safety timeout is applied as a {@code .withTimeout()} decorator at the one place
+ * this command is actually bound to a button, in RobotContainer.java. Decorators like
+ * {@code .withTimeout()}/{@code .andThen()}/{@code .until()} work on ANY Command -- an
+ * explicit class like this one just as well as a {@code Commands.run(...)} one-liner --
+ * which is why it doesn't matter that FireCommand and, say, DriveDistanceCommand build
+ * their behavior in very different ways internally.
+ */
+public class FireCommand extends Command {
+
+    private final Trigger trigger;
+    // Not `final`: unlike every field seen so far, this one IS reassigned after
+    // construction -- once in initialize() every time the command restarts, and again
+    // inside isFinished() as the cam leaves home. It's a plain boolean instance field,
+    // not a parameter -- nothing external ever passes this in; it's a value this
+    // object tracks purely for itself.
+    private boolean hasLeftHome = false;
+
+    public FireCommand(Trigger trigger) {
+        this.trigger = trigger;
+        addRequirements(trigger);
+    }
+
+    @Override
+    public void initialize() {
+        hasLeftHome = false;
+    }
+
+    @Override
+    public void execute() {
+        trigger.runCam();
+    }
+
+    @Override
+    public boolean isFinished() {
+        if (!hasLeftHome) {
+            // Still waiting for the cam to leave home for the first time -- once it
+            // does, remember that and start watching for it to come back.
+            if (!trigger.isAtHome()) {
+                hasLeftHome = true;
+            }
+            return false;
+        }
+        return trigger.isAtHome();
+    }
+
+    @Override
+    public void end(boolean interrupted) {
+        trigger.stopCam();
+    }
+}
+```
+
+### src/main/java/frc/robot/commands/IntakeCommand.java
+
+```java
+package frc.robot.commands;
+
+import static frc.robot.Constants.GripperConstants.*;
+
+import edu.wpi.first.wpilibj2.command.Command;
+import frc.robot.subsystems.Gripper;
+
+/**
+ * The simplest command in this project: hold a fixed speed while bound (whileTrue in
+ * RobotContainer.java), stop when released. No sensors, no looping math -- a good
+ * first command file to read.
+ */
+public class IntakeCommand extends Command {
+
+    private final Gripper gripper;
+
+    /**
+     * See TeleopDriveCommand.java's constructor for the full explanation of every
+     * piece of syntax here: {@code public}, the {@code Gripper gripper} parameter's
+     * mandatory type, the implicit no-arg {@code super()} call Java inserts since none
+     * is written, and why a constructor is written with no return type at all (not
+     * even {@code void}).
+     */
+    public IntakeCommand(Gripper gripper) {
+        this.gripper = gripper;
+        addRequirements(gripper);
+    }
+
+    @Override
+    public void execute() {
+        gripper.setSpeed(INTAKE_SPEED);
+    }
+
+    @Override
+    public boolean isFinished() {
+        // Always false: this command is meant to be bound with whileTrue, so it only
+        // stops when the button is released, which the scheduler handles by calling
+        // end() below instead.
+        return false;
+    }
+
+    @Override
+    public void end(boolean interrupted) {
+        // See DriveDistanceCommand.java's end() for what the `interrupted` parameter
+        // means -- this command doesn't need to look at its value, but every command's
+        // end() method receives it regardless.
+        gripper.stop();
+    }
+}
+```
+
+### src/main/java/frc/robot/commands/LowerElevatorCommand.java
+
+```java
+package frc.robot.commands;
+
+import static frc.robot.Constants.ElevatorConstants.LOWER_SPEED;
+
+import edu.wpi.first.wpilibj2.command.Command;
+import frc.robot.subsystems.Elevator;
+
+/** See RaiseElevatorCommand.java for the shared reasoning behind this pair. */
+public class LowerElevatorCommand extends Command {
+
+    private final Elevator elevator;
+
+    public LowerElevatorCommand(Elevator elevator) {
+        this.elevator = elevator;
+        addRequirements(elevator);
+    }
+
+    @Override
+    public void execute() {
+        if (elevator.isAtBottom()) {
+            elevator.stop();
+        } else {
+            elevator.setSpeed(LOWER_SPEED);
+        }
+    }
+
+    @Override
+    public boolean isFinished() {
+        return false;
+    }
+
+    @Override
+    public void end(boolean interrupted) {
+        elevator.stop();
+    }
+}
+```
+
+### src/main/java/frc/robot/commands/RaiseElevatorCommand.java
+
+```java
+package frc.robot.commands;
+
+import static frc.robot.Constants.ElevatorConstants.RAISE_SPEED;
+
+import edu.wpi.first.wpilibj2.command.Command;
+import frc.robot.subsystems.Elevator;
+
+/**
+ * RaiseElevatorCommand and LowerElevatorCommand (in LowerElevatorCommand.java) are
+ * near-identical on purpose: both are meant to be bound with whileTrue (see
+ * RobotContainer.java), so {@code isFinished()} always returns {@code false} and the
+ * command only stops when the button is released (which interrupts it, calling
+ * {@code end()}) or when {@code execute()} itself detects a limit switch and calls
+ * {@code stop()}. That second check matters even though the command is also
+ * "supposed" to stop when the button is released: it protects the mechanism the
+ * instant it reaches a limit, without waiting on the operator to notice and let go.
+ */
+public class RaiseElevatorCommand extends Command {
+
+    private final Elevator elevator;
+
+    public RaiseElevatorCommand(Elevator elevator) {
+        this.elevator = elevator;
+        addRequirements(elevator);
+    }
+
+    @Override
+    public void execute() {
+        if (elevator.isAtTop()) {
+            elevator.stop();
+        } else {
+            elevator.setSpeed(RAISE_SPEED);
+        }
+    }
+
+    @Override
+    public boolean isFinished() {
+        return false;
+    }
+
+    @Override
+    public void end(boolean interrupted) {
+        elevator.stop();
+    }
+}
+```
+
+### src/main/java/frc/robot/commands/ResetGyroCommand.java
+
+```java
+package frc.robot.commands;
+
+import edu.wpi.first.wpilibj2.command.Command;
+import frc.robot.subsystems.DriveTrain;
+
+/**
+ * Resets the navX gyro's heading to 0 -- bound to the driver's Back button. Do this
+ * before every autonomous run, with the robot pointed the way it should be for that
+ * run's "0 degrees."
+ *
+ * <p>A one-shot action still gets a full class here, on purpose (see the README's
+ * "Where do commands live?" section): {@code initialize()} does the actual work, and
+ * {@code isFinished()} returns {@code true} immediately so the command scheduler ends
+ * it the very next loop after that -- there's no {@code execute()} at all, since
+ * there's nothing to repeat.
+ */
+public class ResetGyroCommand extends Command {
+
+    private final DriveTrain drivetrain;
+
+    /**
+     * Same constructor pattern as TeleopDriveCommand.java, just with one parameter
+     * instead of two, and no explicit {@code super(...)} call needed (see that file's
+     * constructor for the full explanation of both).
+     */
+    public ResetGyroCommand(DriveTrain drivetrain) {
+        this.drivetrain = drivetrain;
+        addRequirements(drivetrain);
+    }
+
+    @Override
+    public void initialize() {
+        drivetrain.resetGyro();
+    }
+
+    @Override
+    public boolean isFinished() {
+        return true;
+    }
+}
+```
+
+### src/main/java/frc/robot/commands/SpinUpShooterCommand.java
+
+```java
+package frc.robot.commands;
+
+import static frc.robot.Constants.ShooterConstants.TARGET_RPM;
+
+import edu.wpi.first.wpilibj2.command.Command;
+import frc.robot.subsystems.Shooter;
+
+/**
+ * Only one command for Shooter: spin the flywheel up to a fixed target speed, and hold
+ * it there until interrupted. Notice this class has no {@code execute()} at all --
+ * that's not an omission. Phoenix 6's velocity control is closed-loop on the TalonFX
+ * itself (see subsystems/Shooter.java), so this command only has to say "go to this
+ * speed" once ({@code initialize()}) and "stop" once ({@code end()}) -- there's nothing
+ * to redo every 20ms loop the way DriveTrain's open-loop, duty-cycle commands need.
+ */
+public class SpinUpShooterCommand extends Command {
+
+    private final Shooter shooter;
+
+    public SpinUpShooterCommand(Shooter shooter) {
+        this.shooter = shooter;
+        addRequirements(shooter);
+    }
+
+    @Override
+    public void initialize() {
+        shooter.setTargetRpm(TARGET_RPM);
+    }
+
+    @Override
+    public boolean isFinished() {
+        // Runs until interrupted (the operator presses the toggle button again -- see
+        // RobotContainer.java's toggleOnTrue binding).
+        return false;
+    }
+
+    @Override
+    public void end(boolean interrupted) {
+        shooter.stop();
+    }
+}
+```
+
+### src/main/java/frc/robot/commands/TeleopDriveCommand.java
+
+```java
+package frc.robot.commands;
+
+import static frc.robot.Constants.DriveTrainConstants.SPEED_SCALE;
+
+import edu.wpi.first.wpilibj2.command.Command;
+import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
+import frc.robot.subsystems.DriveTrain;
+
+/**
+ * The default command: tank drive read straight from the driver controller's two
+ * joystick Y-axes.
+ *
+ * <p>Takes the controller object itself, rather than two "give me the current
+ * left/right stick value" suppliers -- a common alternative
+ * ({@code DoubleSupplier} arguments filled in with a lambda like
+ * {@code () -> -controller.getLeftY()} at the call site) that avoids naming this class
+ * but requires understanding lambdas/method references to read. Calling
+ * {@code driverController.getLeftY()} directly, right here, is one idea instead of two.
+ *
+ * <p>This is the simplest possible Command with real behavior. It has no state and
+ * nothing to set up or clean up, so it only overrides {@code execute()} and
+ * {@code isFinished()} -- there's no need to write empty {@code initialize()}/
+ * {@code end()} methods just to have them; {@code Command}'s base class already
+ * provides do-nothing versions. {@code isFinished()} always returns {@code false}
+ * because a default command is meant to run forever, until some other command needs
+ * DriveTrain and interrupts it.
+ */
+public class TeleopDriveCommand extends Command {
+
+    // `private final` fields, one per constructor parameter, assigned once in the
+    // constructor and never reassigned afterward -- see the constructor below for the
+    // full explanation of why these exist and what each piece of the constructor's
+    // signature means.
+    private final DriveTrain drivetrain;
+    private final CommandXboxController driverController;
+
+    /**
+     * The constructor. Java calls this automatically whenever something writes
+     * {@code new TeleopDriveCommand(...)} -- in this project, that happens exactly
+     * once, in RobotContainer.java's {@code configureDefaultCommands()}. Several
+     * pieces of syntax on this line are worth calling out individually, since they
+     * repeat, in different combinations, in every command class in this project:
+     *
+     * <ul>
+     *   <li><b>{@code public}</b> -- an access modifier. It means any other class,
+     *       anywhere in this project (or beyond), can call {@code new
+     *       TeleopDriveCommand(...)}. Compare this to {@code private} fields like
+     *       {@code drivetrain} above: those can only be read by code written inside
+     *       this very class. Java requires an explicit access modifier decision like
+     *       this on every field and method; Python has no equivalent keyword; it only
+     *       has the {@code _leadingUnderscore} naming CONVENTION this whole project
+     *       already uses to mean the same thing, which nothing in the language itself
+     *       enforces.</li>
+     *   <li><b>{@code DriveTrain drivetrain}</b> -- a parameter. Unlike Python, where
+     *       a type hint after a colon ({@code drivetrain: DriveTrain}) is optional
+     *       and checked only by external tools (never by the Python interpreter
+     *       itself), Java requires every parameter to have a declared type, written
+     *       BEFORE the name with no colon, and the compiler itself refuses to compile
+     *       code that passes the wrong type here -- there is no way to skip this in
+     *       Java the way an un-annotated Python parameter skips it.</li>
+     *   <li><b>{@code CommandXboxController driverController}</b> -- the physical Xbox
+     *       controller plugged into port 0 (see {@code Constants.OperatorConstants
+     *       .DRIVER_CONTROLLER_PORT}, and RobotContainer.java, where the real
+     *       controller object is actually constructed and passed in here). Storing the
+     *       whole controller object -- instead of, say, two numbers read from it once
+     *       -- is what lets {@code execute()} below call {@code .getLeftY()}/
+     *       {@code .getRightY()} on it fresh every single loop.</li>
+     *   <li><b>No return type written before the constructor's name at all</b> -- not
+     *       even {@code void}. Every normal Java method needs a return type
+     *       ({@code void} for "returns nothing," or a real type for "returns this").
+     *       A constructor is the one exception: it implicitly builds and returns the
+     *       new object, and Java's grammar does not allow ANY return-type keyword to
+     *       be written on this line, {@code void} included -- writing one is a syntax
+     *       error, not just bad style. Python's {@code __init__(self, ...) -> None} is
+     *       different in exactly this respect: Python DOES allow (and this project's
+     *       Python sibling uses) an explicit {@code -> None} annotation on
+     *       {@code __init__}, because in Python {@code __init__} is an ordinary method
+     *       that happens to conventionally return {@code None} -- Java's constructor
+     *       is a distinct kind of member with its own grammar rule forbidding a return
+     *       type outright.</li>
+     *   <li><b>{@code super(); }-- wait, there is no {@code super()} call written
+     *       here.</b> Every command's constructor in this project's Python sibling
+     *       starts with an explicit {@code super().__init__()}. In Java, if a
+     *       constructor's first line does NOT explicitly call {@code super(...)}, the
+     *       compiler automatically inserts a call to the parent class's no-argument
+     *       constructor for you, as if it were the first line. {@code Command}'s own
+     *       no-argument constructor does the setup this class needs, so nothing
+     *       explicit is required here -- unlike Python, where {@code __init__} is
+     *       never called automatically and always has to be invoked by name.</li>
+     * </ul>
+     */
+    public TeleopDriveCommand(DriveTrain drivetrain, CommandXboxController driverController) {
+        this.drivetrain = drivetrain;
+        this.driverController = driverController;
+        // `this.drivetrain = drivetrain;` -- the field and the parameter share the
+        // same name on purpose (this project's Java convention, mirroring the Python
+        // sibling's `self._drivetrain = drivetrain`), which means `this.` in front of
+        // the left-hand side is not optional decoration here: without it, `drivetrain
+        // = drivetrain;` would just assign the parameter to itself and leave the
+        // field permanently unset. `this.` explicitly means "the field belonging to
+        // the object being constructed," disambiguating it from the same-named
+        // parameter.
+        addRequirements(drivetrain);
+    }
+
+    @Override
+    public void execute() {
+        // execute() runs every ~20ms while this command is scheduled -- exactly often
+        // enough to keep reading fresh joystick values and keep driving. Xbox
+        // joysticks report "pushed forward" as a NEGATIVE Y value, which is backwards
+        // from how a driver thinks about "forward" -- the leading minus signs below
+        // flip that back.
+        double leftY = -driverController.getLeftY();
+        double rightY = -driverController.getRightY();
+        drivetrain.drive(SPEED_SCALE * leftY, SPEED_SCALE * rightY);
+    }
+
+    @Override
+    public boolean isFinished() {
+        // `boolean` (lowercase) is one of Java's eight built-in "primitive" types --
+        // unlike `DriveTrain` or `CommandXboxController` above, it is not a class, has
+        // no methods of its own, and can only ever hold `true` or `false`, never
+        // `null`. Returning `false` here means "never finish on your own" -- exactly
+        // what a default command needs, since it's meant to keep running until some
+        // OTHER command that also needs DriveTrain gets scheduled and interrupts this
+        // one instead.
+        return false;
+    }
+}
+```
+
+### src/main/java/frc/robot/commands/TurnToAngleCommand.java
+
+```java
+package frc.robot.commands;
+
+import static frc.robot.Constants.DriveTrainConstants.*;
+
+import edu.wpi.first.math.controller.PIDController;
+import edu.wpi.first.wpilibj2.command.Command;
+import frc.robot.subsystems.DriveTrain;
+
+/**
+ * PID-turns to an absolute heading, given in degrees (CCW-positive, 0 = whatever
+ * heading the navX gyro was last reset to). Positive = turn left.
+ */
+public class TurnToAngleCommand extends Command {
+
+    private final DriveTrain drivetrain;
+    private final double targetDegrees;
+    private final PIDController pid;
+
+    public TurnToAngleCommand(DriveTrain drivetrain, double targetDegrees) {
+        this.drivetrain = drivetrain;
+        this.targetDegrees = targetDegrees;
+        addRequirements(drivetrain);
+
+        pid = new PIDController(TURN_KP, TURN_KI, TURN_KD);
+        // A heading wraps around at +/-180 degrees. Without this next line, turning
+        // from 179 degrees to -179 degrees (really just a 2-degree turn) would look to
+        // a naive PID controller like a 358-degree turn the "long way around."
+        // enableContinuousInput tells it to treat the range as a circle instead of a
+        // straight line.
+        pid.enableContinuousInput(-180, 180);
+        pid.setTolerance(TURN_TOLERANCE_DEGREES);
+    }
+
+    @Override
+    public void initialize() {
+        pid.reset();
+        pid.setSetpoint(targetDegrees);
+    }
+
+    @Override
+    public void execute() {
+        double output = pid.calculate(drivetrain.getHeadingDegrees());
+        // Turning in place: equal and opposite power to each side. Positive output
+        // steers left, so the left side goes backward while the right side goes
+        // forward.
+        drivetrain.drive(-output, output);
+    }
+
+    @Override
+    public boolean isFinished() {
+        return pid.atSetpoint();
+    }
+
+    @Override
+    public void end(boolean interrupted) {
+        drivetrain.stop();
+    }
+}
+```
+
+### src/main/java/frc/robot/autonomous/AutoChooser.java
+
+```java
+package frc.robot.autonomous;
+
+import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+import edu.wpi.first.wpilibj2.command.Command;
+import edu.wpi.first.wpilibj2.command.Commands;
+import frc.robot.subsystems.DriveTrain;
+
+/**
+ * Builds the SmartDashboard autonomous-routine chooser for the teaching-bot proof of
+ * concept: two real routines plus a "Do Nothing" default.
+ */
+public final class AutoChooser {
+    private AutoChooser() {}
+
+    private static final String DO_NOTHING_NAME = "Do Nothing";
+    private static final String DRIVE_FORWARD_NAME = "Drive Forward 10 ft";
+    private static final String DRIVE_TURN_DRIVE_NAME = "Drive 5ft, Turn Left 90, Drive 3ft";
+
+    /**
+     * {@code SendableChooser<Command>} -- the angle brackets are a Java GENERIC type
+     * parameter: this says "a SendableChooser whose options are all Command objects,"
+     * the same idea as Python's {@code SendableChooser} which can hold any type of
+     * option but here is used consistently with Command values. Unlike Python (which
+     * doesn't check this at all at runtime), Java's compiler uses the {@code <Command>}
+     * to guarantee every option ever added to (or read from) this specific chooser
+     * really is a Command, catching a wrong-type mistake at compile time instead of
+     * only when the mistaken value is actually used.
+     */
+    public static SendableChooser<Command> build(DriveTrain drivetrain) {
+        SendableChooser<Command> chooser = new SendableChooser<>();
+        chooser.setDefaultOption(DO_NOTHING_NAME, Commands.none());
+        chooser.addOption(DRIVE_FORWARD_NAME, AutoRoutines.driveForwardOnly(drivetrain));
+        chooser.addOption(DRIVE_TURN_DRIVE_NAME, AutoRoutines.driveTurnDrive(drivetrain));
+        SmartDashboard.putData("Auto Chooser", chooser);
+        return chooser;
+    }
+}
+```
+
+### src/main/java/frc/robot/autonomous/AutoRoutines.java
+
+```java
+package frc.robot.autonomous;
+
+import static frc.robot.Constants.Auto.*;
+
+import edu.wpi.first.wpilibj2.command.Command;
+import edu.wpi.first.wpilibj2.command.Commands;
+import frc.robot.commands.DriveDistanceCommand;
+import frc.robot.commands.TurnToAngleCommand;
+import frc.robot.subsystems.DriveTrain;
+
+/**
+ * The two autonomous routines for the teaching-bot proof of concept.
+ *
+ * <p>Both are built entirely from commands/DriveDistanceCommand.java and
+ * commands/TurnToAngleCommand.java -- no PathPlanner, no vision, just wheel encoders
+ * and a gyro. All distances/angles are in feet/degrees, taken straight from
+ * {@code Constants.Auto}; {@code DriveDistanceCommand} converts feet to meters
+ * internally (see its constructor), so nothing in this file ever touches metric units.
+ *
+ * <p>{@code final class AutoRoutines} with a {@code private AutoRoutines() {}}
+ * constructor and only {@code static} methods is Java's usual stand-in for a Python
+ * module of free functions: Python's {@code autonomous/routines.py} could just define
+ * {@code def drive_forward_only(drivetrain): ...} at the top level of a file, since
+ * Python allows functions to exist outside any class. Java requires every method to
+ * live inside some class, so a class that is never instantiated (only ever referenced
+ * as {@code AutoRoutines.driveForwardOnly(...)}) is the idiomatic way to group a small
+ * set of related, state-free functions the way Python would with a module.
+ */
+public final class AutoRoutines {
+    private AutoRoutines() {}
+
+    /** Drives straight forward {@code Auto.DRIVE_FORWARD_ONLY_FEET} feet, then stops. */
+    public static Command driveForwardOnly(DriveTrain drivetrain) {
+        return new DriveDistanceCommand(drivetrain, DRIVE_FORWARD_ONLY_FEET);
+    }
+
+    /**
+     * Drives forward, turns, drives forward again:
+     * {@code Auto.DRIVE_TURN_DRIVE_FIRST_LEG_FEET} feet -&gt; turn
+     * {@code Auto.DRIVE_TURN_DRIVE_TURN_DEGREES} degrees (positive = left) -&gt;
+     * {@code Auto.DRIVE_TURN_DRIVE_SECOND_LEG_FEET} feet.
+     */
+    public static Command driveTurnDrive(DriveTrain drivetrain) {
+        return Commands.sequence(
+            new DriveDistanceCommand(drivetrain, DRIVE_TURN_DRIVE_FIRST_LEG_FEET),
+            new TurnToAngleCommand(drivetrain, DRIVE_TURN_DRIVE_TURN_DEGREES),
+            new DriveDistanceCommand(drivetrain, DRIVE_TURN_DRIVE_SECOND_LEG_FEET)
+        );
+    }
+}
+```
+
+### src/test/java/frc/robot/ElevatorTest.java
+
+```java
+package frc.robot;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import edu.wpi.first.hal.HAL;
+import edu.wpi.first.wpilibj.simulation.DIOSim;
+import edu.wpi.first.wpilibj.simulation.DriverStationSim;
+import edu.wpi.first.wpilibj.simulation.SimHooks;
+import edu.wpi.first.wpilibj2.command.CommandScheduler;
+import frc.robot.commands.LowerElevatorCommand;
+import frc.robot.commands.RaiseElevatorCommand;
+import frc.robot.subsystems.Elevator;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Unit tests for Elevator's limit-switch-gated raise/lower commands -- a Java
+ * translation of the Python sibling's {@code test_elevator.py}. {@link DIOSim} is
+ * keyed by DIO port number, not by reaching into any object, so no visibility changes
+ * to Elevator.java were needed to write this file the way DriveTrainTest.java needed
+ * one for the SparkMax encoders.
+ */
+class ElevatorTest {
+
+    private RobotContainer robotContainer;
+    private Elevator elevator;
+
+    @BeforeEach
+    void setup() {
+        if (!HAL.initialize(500, 0)) {
+            throw new IllegalStateException("HAL failed to initialize");
+        }
+        robotContainer = new RobotContainer();
+        elevator = robotContainer.elevator;
+    }
+
+    @AfterEach
+    void teardown() {
+        CommandScheduler.getInstance().cancelAll();
+        CommandScheduler.getInstance().unregisterAllSubsystems();
+        HAL.shutdown();
+    }
+
+    private void step(double seconds) {
+        SimHooks.stepTiming(seconds);
+        CommandScheduler.getInstance().run();
+    }
+
+    @Test
+    void raiseCommandStopsAtTop() {
+        DIOSim topSim = new DIOSim(Constants.ElevatorConstants.TOP_LIMIT_SWITCH_DIO_PORT);
+
+        topSim.setValue(false); // not at top
+        assertFalse(elevator.isAtTop());
+
+        // A command can only be scheduled while the robot is enabled (the default
+        // runsWhenDisabled() is false), so enable it first.
+        DriverStationSim.setEnabled(true);
+        DriverStationSim.notifyNewData();
+        step(0.02);
+
+        RaiseElevatorCommand command = new RaiseElevatorCommand(elevator);
+        command.schedule();
+        step(0.1);
+        assertTrue(command.isScheduled()); // whileTrue-style: keeps running while held
+
+        topSim.setValue(true); // reached the top
+        step(0.1);
+        assertTrue(elevator.isAtTop());
+    }
+
+    @Test
+    void lowerCommandStopsAtBottom() {
+        DIOSim bottomSim = new DIOSim(Constants.ElevatorConstants.BOTTOM_LIMIT_SWITCH_DIO_PORT);
+
+        bottomSim.setValue(false); // not at bottom
+        assertFalse(elevator.isAtBottom());
+
+        DriverStationSim.setEnabled(true);
+        DriverStationSim.notifyNewData();
+        step(0.02);
+
+        LowerElevatorCommand command = new LowerElevatorCommand(elevator);
+        command.schedule();
+        step(0.1);
+        assertTrue(command.isScheduled());
+
+        bottomSim.setValue(true); // reached the bottom
+        step(0.1);
+        assertTrue(elevator.isAtBottom());
+    }
+}
+```
+
+### src/test/java/frc/robot/RobotLifecycleTest.java
+
+```java
+package frc.robot;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+
+import edu.wpi.first.hal.HAL;
+import edu.wpi.first.wpilibj.simulation.DriverStationSim;
+import edu.wpi.first.wpilibj.simulation.SimHooks;
+import edu.wpi.first.wpilibj2.command.CommandScheduler;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Smoke test: step the whole robot through disabled -&gt; autonomous -&gt; teleop and
+ * confirm nothing throws. This is a Java translation of the Python sibling's
+ * {@code test_robot_lifecycle.py}.
+ *
+ * <p>Python's version runs under pyfrc's pytest plugin, which provides ready-made
+ * {@code robot}/{@code control} fixtures ({@code control.step_timing(...)} advances
+ * simulated time AND flips the enabled/autonomous mode flags in one call). WPILib's
+ * Java toolchain has no equivalent plugin, so this file does by hand what that fixture
+ * did for free: {@link HAL#initialize} boots the simulated hardware layer,
+ * {@link DriverStationSim} sets the enabled/autonomous mode flags a real driver station
+ * would set, and {@link SimHooks#stepTiming} advances the simulated clock and lets
+ * {@link CommandScheduler} run its periodic loop the corresponding number of times.
+ * Every test class in this project's {@code src/test/} repeats this same
+ * {@code @BeforeEach}/{@code @AfterEach} pair explicitly rather than hiding it behind a
+ * shared base class -- consistent with this whole project's "explicit over implicit"
+ * rule for anything a rookie might need to step through.
+ */
+class RobotLifecycleTest {
+
+    private RobotContainer robotContainer;
+
+    @BeforeEach
+    void setup() {
+        assertDoesNotThrow(() -> {
+            if (!HAL.initialize(500, 0)) {
+                throw new IllegalStateException("HAL failed to initialize");
+            }
+        });
+        robotContainer = new RobotContainer();
+    }
+
+    @AfterEach
+    void teardown() {
+        CommandScheduler.getInstance().cancelAll();
+        CommandScheduler.getInstance().unregisterAllSubsystems();
+        HAL.shutdown();
+    }
+
+    private void stepDisabled(double seconds) {
+        DriverStationSim.setEnabled(false);
+        DriverStationSim.setAutonomous(false);
+        DriverStationSim.notifyNewData();
+        SimHooks.stepTiming(seconds);
+        CommandScheduler.getInstance().run();
+    }
+
+    private void stepAutonomous(double seconds) {
+        DriverStationSim.setEnabled(true);
+        DriverStationSim.setAutonomous(true);
+        DriverStationSim.notifyNewData();
+        SimHooks.stepTiming(seconds);
+        CommandScheduler.getInstance().run();
+    }
+
+    private void stepTeleop(double seconds) {
+        DriverStationSim.setEnabled(true);
+        DriverStationSim.setAutonomous(false);
+        DriverStationSim.notifyNewData();
+        SimHooks.stepTiming(seconds);
+        CommandScheduler.getInstance().run();
+    }
+
+    @Test
+    void fullModeCycleDoesNotThrow() {
+        assertDoesNotThrow(() -> {
+            stepDisabled(0.1);
+            var autoCommand = robotContainer.getAutonomousCommand();
+            if (autoCommand != null) {
+                autoCommand.schedule();
+            }
+            stepAutonomous(1.0);
+            stepDisabled(0.1);
+            stepTeleop(1.0);
+            stepDisabled(0.1);
+        });
+    }
+}
+```
+
+### src/test/java/frc/robot/TriggerTest.java
+
+```java
+package frc.robot;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import edu.wpi.first.hal.HAL;
+import edu.wpi.first.wpilibj.simulation.DIOSim;
+import edu.wpi.first.wpilibj.simulation.DriverStationSim;
+import edu.wpi.first.wpilibj.simulation.SimHooks;
+import edu.wpi.first.wpilibj2.command.Command;
+import edu.wpi.first.wpilibj2.command.CommandScheduler;
+import frc.robot.commands.FireCommand;
+import frc.robot.subsystems.Trigger;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Unit tests for Trigger's FireCommand edge-detection state machine -- a Java
+ * translation of the Python sibling's {@code test_trigger.py}.
+ *
+ * <p>The cam has only one sensor (a limit switch at "home"), so "one fire" is defined
+ * as: leave home, then come back to home. These tests exercise that logic directly
+ * against the DigitalInput simulation, without needing a real cam mechanism.
+ * FireCommand itself has no built-in timeout (see its docstring) -- the second test
+ * below applies the same {@code .withTimeout()} decorator RobotContainer.java binds it
+ * with, to prove the safety timeout actually works.
+ */
+class TriggerTest {
+
+    private RobotContainer robotContainer;
+    private Trigger trigger;
+
+    @BeforeEach
+    void setup() {
+        if (!HAL.initialize(500, 0)) {
+            throw new IllegalStateException("HAL failed to initialize");
+        }
+        robotContainer = new RobotContainer();
+        trigger = robotContainer.trigger;
+    }
+
+    @AfterEach
+    void teardown() {
+        CommandScheduler.getInstance().cancelAll();
+        CommandScheduler.getInstance().unregisterAllSubsystems();
+        HAL.shutdown();
+    }
+
+    private void step(double seconds) {
+        SimHooks.stepTiming(seconds);
+        CommandScheduler.getInstance().run();
+    }
+
+    @Test
+    void fireCommandFinishesWhenCamReturnsHome() {
+        DIOSim limitSwitchSim = new DIOSim(Constants.TriggerConstants.LIMIT_SWITCH_DIO_PORT);
+
+        // Start "at home" (limit switch reads true, not inverted).
+        limitSwitchSim.setValue(true);
+        assertTrue(trigger.isAtHome());
+
+        // A command can only be scheduled while the robot is enabled (the default
+        // runsWhenDisabled() is false), so enable it first.
+        DriverStationSim.setEnabled(true);
+        DriverStationSim.notifyNewData();
+        step(0.02);
+
+        FireCommand command = new FireCommand(trigger);
+        command.schedule();
+        step(0.1);
+        // Still "at home" on the very first tick -- command must not report finished
+        // until it has actually left home at least once.
+        assertTrue(command.isScheduled());
+
+        // Simulate the cam leaving home.
+        limitSwitchSim.setValue(false);
+        step(0.1);
+        assertTrue(command.isScheduled());
+
+        // Simulate the cam returning home -- command should finish now.
+        limitSwitchSim.setValue(true);
+        step(0.1);
+        assertFalse(command.isScheduled());
+    }
+
+    @Test
+    void fireCommandTimesOutIfNeverReturnsHome() {
+        DIOSim limitSwitchSim = new DIOSim(Constants.TriggerConstants.LIMIT_SWITCH_DIO_PORT);
+
+        limitSwitchSim.setValue(false); // never at home -- simulates a jam
+        DriverStationSim.setEnabled(true);
+        DriverStationSim.notifyNewData();
+        step(0.02);
+
+        // .withTimeout() is the decorator RobotContainer.java actually binds
+        // FireCommand with -- applying it here too is what proves the timeout (not
+        // just the edge-detection logic) really stops a jammed cam.
+        //
+        // `.withTimeout(...)` does NOT modify the FireCommand it's called on -- it
+        // wraps it in a brand new Command object that composes the original
+        // internally. That wrapper is what actually gets scheduled, so it's the
+        // wrapper's `isScheduled()` this test has to check below, captured here in a
+        // variable typed as the general `Command` interface rather than `FireCommand`
+        // (the wrapper is not itself a FireCommand). Checking the original
+        // `FireCommand` object's own `isScheduled()` instead would be a real mistake:
+        // the scheduler only ever registers the outer wrapper, so the inner
+        // FireCommand's `isScheduled()` would incorrectly read `false` from the very
+        // first loop, making this test pass without actually exercising the timeout.
+        Command timedCommand = new FireCommand(trigger).withTimeout(Constants.TriggerConstants.FIRE_TIMEOUT_SECONDS);
+        timedCommand.schedule();
+        step(Constants.TriggerConstants.FIRE_TIMEOUT_SECONDS + 0.5);
+        assertFalse(timedCommand.isScheduled());
+    }
+}
+```
+
+### src/test/java/frc/robot/subsystems/DriveTrainTest.java
+
+```java
+package frc.robot.subsystems;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import edu.wpi.first.hal.HAL;
+import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.wpilibj.simulation.DriverStationSim;
+import edu.wpi.first.wpilibj.simulation.SimDeviceSim;
+import edu.wpi.first.wpilibj.simulation.SimHooks;
+import edu.wpi.first.wpilibj2.command.CommandScheduler;
+import frc.robot.Constants;
+import frc.robot.RobotContainer;
+import frc.robot.autonomous.AutoRoutines;
+import frc.robot.commands.DriveDistanceCommand;
+import frc.robot.commands.TurnToAngleCommand;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Unit tests for DriveTrain's encoder-distance bookkeeping, odometry, kinematics, and
+ * its PID autonomous commands -- a Java translation of the Python sibling's
+ * {@code test_drivetrain.py}.
+ *
+ * <p>This test class lives in {@code frc.robot.subsystems} (not {@code frc.robot},
+ * where most of this project's classes live) specifically so it can reach
+ * DriveTrain's package-private {@code leftEncoder}/{@code rightEncoder} fields
+ * directly -- see the comment on those fields in DriveTrain.java for why they aren't
+ * simply {@code private} the way every other hardware field in this project is.
+ *
+ * <p>This project has no physics simulation wired into its Gradle build the way the
+ * Python sibling's {@code physics.py} is wired into {@code robotpy sim} (writing an
+ * equivalent {@code simulationPeriodic()} model is a good exercise, not done here) --
+ * so unlike the Python tests, nothing here overwrites a poked encoder or gyro value on
+ * its own. That actually makes these tests SIMPLER than their Python counterparts:
+ * there's no physics-engine-races-the-scheduler gotcha to work around, since nothing
+ * is racing. The odometry tests below still call {@code drivetrain.periodic()}
+ * directly, matching the Python sibling's own pattern, even though nothing here
+ * strictly requires bypassing the scheduler the way the Python version does -- it
+ * keeps the two test suites reading the same way line for line.
+ */
+class DriveTrainTest {
+
+    private RobotContainer robotContainer;
+    private DriveTrain drivetrain;
+
+    @BeforeEach
+    void setup() {
+        if (!HAL.initialize(500, 0)) {
+            throw new IllegalStateException("HAL failed to initialize");
+        }
+        robotContainer = new RobotContainer();
+        drivetrain = robotContainer.drivetrain;
+    }
+
+    @AfterEach
+    void teardown() {
+        CommandScheduler.getInstance().cancelAll();
+        CommandScheduler.getInstance().unregisterAllSubsystems();
+        HAL.shutdown();
+    }
+
+    private void enable() {
+        DriverStationSim.setEnabled(true);
+        DriverStationSim.setAutonomous(true);
+        DriverStationSim.notifyNewData();
+    }
+
+    private void step(double seconds) {
+        SimHooks.stepTiming(seconds);
+        CommandScheduler.getInstance().run();
+    }
+
+    @Test
+    void averageDistanceStartsAtZero() {
+        assertEquals(0.0, drivetrain.getAverageDistanceMeters());
+    }
+
+    @Test
+    void resetEncodersZeroesDistance() {
+        drivetrain.resetEncoders();
+        assertEquals(0.0, drivetrain.getLeftDistanceMeters());
+        assertEquals(0.0, drivetrain.getRightDistanceMeters());
+    }
+
+    @Test
+    void driveDistanceCommandFinishesOnceTargetReached() {
+        // A command can only be scheduled while the robot is enabled (the default
+        // runsWhenDisabled() is false), so enable it first.
+        enable();
+        step(0.02);
+
+        DriveDistanceCommand command = new DriveDistanceCommand(drivetrain, 1.0); // 1 foot
+        command.schedule();
+        step(0.1);
+        assertTrue(command.isScheduled()); // nowhere near the target yet
+
+        // Simulate the robot having driven all the way there by writing the target
+        // distance straight onto both encoders -- same RelativeEncoder.setPosition()
+        // call configureMotors() itself uses to zero them at startup, just called with
+        // a nonzero value here. This is the direct Java equivalent of the Python
+        // test's `drivetrain._left_encoder.setPosition(target_meters)`.
+        double targetMeters = 1.0 * Constants.METERS_PER_FOOT;
+        drivetrain.leftEncoder.setPosition(targetMeters);
+        drivetrain.rightEncoder.setPosition(targetMeters);
+
+        step(0.1);
+        assertFalse(command.isScheduled());
+    }
+
+    @Test
+    void turnToAngleCommandFinishesOnceHeadingReached() {
+        enable();
+        step(0.02);
+
+        // navX simulation is reached differently from the SparkMax encoders above:
+        // Studica's AHRS exposes its simulated yaw through WPILib's generic
+        // SimDeviceSim registry under the name "navX-Sensor[4]" rather than through a
+        // method on the AHRS object itself -- the same mechanism (and the same
+        // device name) the real competition port's own physics simulation uses, and
+        // the same one the Python sibling's test pokes via
+        // `wpilib.simulation.SimDeviceSim("navX-Sensor[4]")`.
+        SimDeviceSim navxSim = new SimDeviceSim("navX-Sensor[4]");
+
+        TurnToAngleCommand command = new TurnToAngleCommand(drivetrain, 90.0);
+        command.schedule();
+        step(0.1);
+        assertTrue(command.isScheduled());
+
+        // getHeadingDegrees() negates the raw navX yaw (see DriveTrain), so -90 raw
+        // yaw simulates having reached +90 degrees heading.
+        navxSim.getDouble("Yaw").set(-90.0);
+        step(0.1);
+        assertFalse(command.isScheduled());
+    }
+
+    @Test
+    void autoRoutinesBuildWithoutError() {
+        assertNotNull(AutoRoutines.driveForwardOnly(drivetrain));
+        assertNotNull(AutoRoutines.driveTurnDrive(drivetrain));
+        assertTrue(Constants.Auto.DRIVE_FORWARD_ONLY_FEET > 0);
+    }
+
+    @Test
+    void poseStartsAtOrigin() {
+        Pose2d pose = drivetrain.getPose();
+        assertEquals(0.0, pose.getX());
+        assertEquals(0.0, pose.getY());
+        assertEquals(0.0, pose.getRotation().getDegrees());
+    }
+
+    @Test
+    void odometryTracksStraightLineDriving() {
+        // Poke both encoders to a known distance, then call periodic() directly.
+        // Heading is left at 0, so odometry should report having moved straight down
+        // the field's X axis by exactly this distance.
+        drivetrain.leftEncoder.setPosition(2.0);
+        drivetrain.rightEncoder.setPosition(2.0);
+        drivetrain.periodic();
+
+        Pose2d pose = drivetrain.getPose();
+        assertEquals(2.0, pose.getX(), 0.01);
+        assertEquals(0.0, pose.getY(), 0.01);
+    }
+
+    @Test
+    void resetPoseSeedsOdometryAndZeroesEncoders() {
+        Pose2d seededPose = new Pose2d(5.0, 1.0, Rotation2d.fromDegrees(90));
+        drivetrain.resetPose(seededPose);
+
+        assertEquals(0.0, drivetrain.getLeftDistanceMeters());
+        assertEquals(0.0, drivetrain.getRightDistanceMeters());
+        Pose2d pose = drivetrain.getPose();
+        assertEquals(5.0, pose.getX(), 0.01);
+        assertEquals(1.0, pose.getY(), 0.01);
+        assertEquals(90.0, pose.getRotation().getDegrees(), 0.5);
+    }
+
+    @Test
+    void chassisSpeedsZeroWhenStopped() {
+        var speeds = drivetrain.getChassisSpeeds();
+        assertEquals(0.0, speeds.vxMetersPerSecond, 1e-6);
+        assertEquals(0.0, speeds.omegaRadiansPerSecond, 1e-6);
+    }
+}
+```
+
+## Using this as a teaching curriculum
+
+Same reading order as `teaching-bot-poc-java`, with `DriveTrain.java` (now the
+longest file in the project) read once more at the end specifically for its
+constructor's field-initialization-order comment and the odometry section above --
+a good moment to ask a rookie: what would go wrong if `odometry`'s field declaration
+tried to call `getHeadingDegrees()` inline, the same way `kinematics`'s declaration
+calls `TRACK_WIDTH_METERS` inline? (Answer: nothing stops that syntactically, but
+the encoders wouldn't be zeroed yet, since `configureMotors()` hasn't run -- Java
+initializes fields in declaration order, and `configureMotors()` is only called
+later, in the constructor body.)
