@@ -26,6 +26,43 @@ earlier Java branch did, and it's worth reading before trusting anything in
 - [Building and running this project](#building-and-running-this-project)
 - [Design decisions and deliberate simplifications](#design-decisions-and-deliberate-simplifications)
 - [Assumptions that need bench verification](#assumptions-that-need-bench-verification)
+- [Blank templates: subsystem and command](#blank-templates-subsystem-and-command)
+- [Annotated source code](#annotated-source-code)
+  - Core classes
+    - [Constants.java](#srcmainjavafrcrobotconstantsjava)
+    - [Main.java](#srcmainjavafrcrobotmainjava)
+    - [Robot.java](#srcmainjavafrcrobotrobotjava)
+    - [RobotContainer.java](#srcmainjavafrcrobotrobotcontainerjava)
+    - [VisionMeasurement.java](#srcmainjavafrcrobotvisionmeasurementjava)
+  - Subsystems
+    - [DriveTrain.java](#srcmainjavafrcrobotsubsystemsdrivetrainjava)
+    - [Elevator.java](#srcmainjavafrcrobotsubsystemselevatorjava)
+    - [Gripper.java](#srcmainjavafrcrobotsubsystemsgripperjava)
+    - [Shooter.java](#srcmainjavafrcrobotsubsystemsshooterjava)
+    - [Trigger.java](#srcmainjavafrcrobotsubsystemstriggerjava)
+    - [Vision.java](#srcmainjavafrcrobotsubsystemsvisionjava)
+  - Commands
+    - [ApproachTagCommand.java](#srcmainjavafrcrobotcommandsapproachtagcommandjava)
+    - [DriveDistanceCommand.java](#srcmainjavafrcrobotcommandsdrivedistancecommandjava)
+    - [EjectCommand.java](#srcmainjavafrcrobotcommandsejectcommandjava)
+    - [FireCommand.java](#srcmainjavafrcrobotcommandsfirecommandjava)
+    - [IntakeCommand.java](#srcmainjavafrcrobotcommandsintakecommandjava)
+    - [LowerElevatorCommand.java](#srcmainjavafrcrobotcommandslowerelevatorcommandjava)
+    - [RaiseElevatorCommand.java](#srcmainjavafrcrobotcommandsraiseelevatorcommandjava)
+    - [ResetGyroCommand.java](#srcmainjavafrcrobotcommandsresetgyrocommandjava)
+    - [SpinUpShooterCommand.java](#srcmainjavafrcrobotcommandsspinupshootercommandjava)
+    - [TeleopDriveCommand.java](#srcmainjavafrcrobotcommandsteleopdrivecommandjava)
+    - [TurnToAngleCommand.java](#srcmainjavafrcrobotcommandsturntoanglecommandjava)
+  - Autonomous
+    - [AutoChooser.java](#srcmainjavafrcrobotautonomousautochooserjava)
+    - [AutoRoutines.java](#srcmainjavafrcrobotautonomousautoroutinesjava)
+  - Tests
+    - [ElevatorTest.java](#srctestjavafrcrobotelevatortestjava)
+    - [RobotLifecycleTest.java](#srctestjavafrcrobotrobotlifecycletestjava)
+    - [TriggerTest.java](#srctestjavafrcrobottriggertestjava)
+    - [VisionTest.java](#srctestjavafrcrobotvisiontestjava)
+    - [ApproachTagCommandTest.java](#srctestjavafrcrobotcommandsapproachtagcommandtestjava)
+    - [DriveTrainTest.java](#srctestjavafrcrobotsubsystemsdrivetraintestjava)
 - [Using this as a teaching curriculum](#using-this-as-a-teaching-curriculum)
 
 ## Verification status
@@ -449,6 +486,173 @@ their definition in `Constants.VisionConstants`:
   above) -- worth deciding deliberately, not by inertia, whether this teaching
   project's behavior or the competition robot's is the one worth adopting if this
   code is ever used as a template for real robot work.
+
+## Blank templates: subsystem and command
+
+Every subsystem in this project follows the same shape (fields for hardware,
+a constructor that configures it, optional `periodic()`, plain public methods
+for a Command to call); every command follows the same shape too (a
+subsystem field, a constructor that calls `addRequirements(...)`, and up to
+four lifecycle methods). These two blank templates show that shape on its
+own, without any real hardware, annotated section by section -- copy one of
+these as a starting point for a new subsystem or command rather than starting
+from a blank file.
+
+### BlankSubsystem.java (template)
+
+```java
+package frc.robot.subsystems;
+
+// Imports: only import what this subsystem actually uses. At minimum that's
+// SubsystemBase; beyond that, typically the vendor/WPILib classes for whatever
+// motors/sensors this subsystem owns (see Gripper.java or Elevator.java for real
+// examples), plus SmartDashboard if this subsystem reports telemetry.
+import edu.wpi.first.wpilibj2.command.SubsystemBase;
+
+/**
+ * TODO: one-sentence description of the real-world mechanism this subsystem
+ * controls (what hardware it owns, and in one clause, why it exists).
+ *
+ * <p>A Subsystem owns exactly one piece of hardware, or one tightly-coupled group
+ * of it, and exposes plain methods that Commands call to use it. A Subsystem
+ * should never decide WHEN to do something -- that decision belongs to a Command
+ * -- only HOW to do it once asked.
+ */
+public class BlankSubsystem extends SubsystemBase {
+
+    // Fields: one hardware object per field (a motor controller, an encoder, a
+    // limit switch, a gyro...), each constructed here at field-declaration time
+    // or in the constructor below. Keep them `private` unless a same-package
+    // test genuinely needs direct access -- see DriveTrain.java's
+    // leftEncoder/rightEncoder fields and their comment for a real example of
+    // that exception, and why it's package-private rather than public.
+
+    /**
+     * Constructor: construct and configure every hardware object this subsystem
+     * owns. Motor inversions, current limits, idle modes, and encoder conversion
+     * factors belong here -- configured once, at startup, not repeated every
+     * loop in periodic() below.
+     */
+    public BlankSubsystem() {
+        // TODO: construct hardware objects and configure them.
+    }
+
+    /**
+     * periodic(): called automatically by the CommandScheduler roughly every
+     * 20ms, for every subsystem, regardless of whether any command is currently
+     * using it. Use it for work that must happen on every loop no matter what --
+     * publishing a dashboard value, running a state machine driven by sensor
+     * input, or (as in DriveTrain) updating odometry every cycle. Anything that
+     * should only happen because a specific command asked for it belongs in a
+     * method below, called BY that command -- not here.
+     */
+    @Override
+    public void periodic() {
+        // TODO: per-loop bookkeeping, if this subsystem needs any. It's fine to
+        // leave this method out entirely (SubsystemBase's default does nothing)
+        // if there's no per-loop work to do.
+    }
+
+    // Public methods: everything a Command needs in order to actually use this
+    // subsystem goes here, as small, mechanical methods -- e.g. setSpeed(double),
+    // isAtSetpoint(), a getter for the latest sensor reading. Keep the decision
+    // of WHEN to call them out of this class; that belongs in a Command.
+}
+```
+
+### BlankCommand.java (template)
+
+```java
+package frc.robot.commands;
+
+// Imports: WPILib's Command base class, plus whichever subsystem(s) this command
+// requires and any math/utility classes its logic needs (a PIDController, for
+// example -- see DriveDistanceCommand.java for a real one).
+import edu.wpi.first.wpilibj2.command.Command;
+import frc.robot.subsystems.BlankSubsystem;
+
+/**
+ * TODO: one-sentence description of the real-world behavior this command
+ * produces once it's scheduled.
+ *
+ * <p>A Command describes WHEN and IN WHAT ORDER to call a Subsystem's methods.
+ * The decision-making belongs here; the Subsystem it uses should stay a thin
+ * wrapper around hardware.
+ */
+public class BlankCommand extends Command {
+
+    private final BlankSubsystem subsystem;
+
+    // Additional fields: anything this command needs to remember between loop
+    // iterations while it's running -- a target value, a baseline sensor reading
+    // captured in initialize() below, a PIDController -- goes here.
+
+    /**
+     * Constructor: takes every subsystem and parameter this command needs, saves
+     * them, and declares which subsystem(s) it requires with
+     * addRequirements(...) -- this is how the CommandScheduler knows to cancel
+     * any other command already using the same subsystem before this one starts.
+     */
+    public BlankCommand(BlankSubsystem subsystem) {
+        this.subsystem = subsystem;
+        addRequirements(subsystem);
+    }
+
+    /**
+     * initialize(): called exactly once, the instant this command is scheduled.
+     * Use it to capture a starting state (a baseline sensor reading, a computed
+     * target) or reset anything that needs a clean slate for this particular
+     * run. Never do this in the constructor -- a single command instance can be
+     * scheduled more than once, and the constructor only runs once, when the
+     * command object is created (often long before it's ever scheduled).
+     */
+    @Override
+    public void initialize() {
+        // TODO: one-time setup for this run of the command. It's fine to leave
+        // this method out entirely if there's genuinely nothing to set up (see
+        // EjectCommand.java/IntakeCommand.java for real examples that skip it).
+    }
+
+    /**
+     * execute(): called every ~20ms while this command is scheduled, after
+     * initialize() and before isFinished() is checked each loop. This is where
+     * the actual per-loop work happens -- e.g. driving a PID controller toward a
+     * setpoint by calling methods on the subsystem.
+     */
+    @Override
+    public void execute() {
+        // TODO: per-loop work while this command runs.
+    }
+
+    /**
+     * isFinished(): checked every loop, right after execute(). Return true the
+     * instant this command's job is done; the scheduler then calls end(false)
+     * and stops scheduling it. Returning the constant `false` (as written here)
+     * makes this a command that never finishes on its own -- correct for
+     * something meant to run until interrupted (like TeleopDriveCommand), wrong
+     * for anything that should end automatically once a condition is met (like
+     * DriveDistanceCommand reaching its target).
+     */
+    @Override
+    public boolean isFinished() {
+        return false;
+    }
+
+    /**
+     * end(interrupted): called exactly once, either because isFinished()
+     * returned true (interrupted == false) or because this command was
+     * cancelled or preempted by another command needing the same subsystem
+     * (interrupted == true). Use it to leave the subsystem in a safe state --
+     * stopping a motor, for example -- regardless of which way the command
+     * ended.
+     */
+    @Override
+    public void end(boolean interrupted) {
+        // TODO: cleanup that must happen whether this command finished normally
+        // or was interrupted.
+    }
+}
+```
 
 ## Annotated source code
 
