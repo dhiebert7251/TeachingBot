@@ -39,7 +39,7 @@ public class DriveTrain extends SubsystemBase {
 
     // Package-private (not private): DriveTrainTest.java, in this same package, pokes
     // these directly to fake driven distance in tests -- Java's `private` has no
-    // bypassable loophole the way Python's underscore convention does.
+    // loophole to reach past, so package-private is the narrowest access that works.
     final RelativeEncoder leftEncoder = leftLead.getEncoder();
     final RelativeEncoder rightEncoder = rightLead.getEncoder();
 

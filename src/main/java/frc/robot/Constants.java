@@ -137,7 +137,7 @@ public final class Constants {
 
         public static final String CAMERA_NAME = "Front_Camera"; // TODO: must match PhotonVision UI camera name
 
-        // Sign convention verified against Python wpimath, not re-verified against Java wpimath -- see README.
+        // Sign convention taken from wpimath's documented Rotation3d pitch behavior, not independently verified by running it -- see README.
         public static final Transform3d ROBOT_TO_CAMERA = new Transform3d(
             new Translation3d((16.0 - 3.0) * 0.0254, 0.0, 1.0 * 0.3048),
             new Rotation3d(0.0, Math.toRadians(-15.0), 0.0)

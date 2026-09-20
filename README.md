@@ -1,15 +1,12 @@
 # Teaching-Bot (Java): AprilTag Vision
 
-This is the **Java sibling** of `teaching-bot-vision` (the Python branch of this same
-repo), which itself builds on `teaching-bot-odometry`. This branch builds on
-`teaching-bot-odometry-java` the same way: adding one PhotonVision camera doing
-AprilTag pose estimation, fusing its fixes into `DriveTrain`'s pose estimator to
+This branch builds on `teaching-bot-odometry-java` by adding one PhotonVision camera
+doing AprilTag pose estimation, fusing its fixes into `DriveTrain`'s pose estimator to
 correct the dead-reckoning drift the odometry branch's README named as its reason for
 existing, and one new cross-subsystem command, `ApproachTagCommand`, built on top of
 that. Every other design decision -- explicit-class commands, no lambdas, the same
 physical robot -- carries over unchanged from `teaching-bot-poc-java`; see that
-branch's README for the full reasoning behind those, and for the general
-Java-vs-Python comparison material this README doesn't repeat.
+branch's README for the full reasoning behind those.
 
 **Read this before anything else: this project has not been compiled or run.** See
 [Verification status](#verification-status) below -- this branch has one additional,
@@ -49,15 +46,20 @@ constructor (field layout + camera transform, no strategy argument) and calls
 `estimateLowestAmbiguityPose(result)`. The real competition port's own `Vision.java`
 instead constructs `PhotonPoseEstimator` with an explicit 3rd argument,
 `PoseStrategy.MULTI_TAG_PNP_ON_COPROCESSOR`, and calls one `poseEstimator.update(result)`
-per camera. Both patterns exist in PhotonLib for the 2026 season. This file uses the
-first pattern because it's the one actually verified end to end in this project's
-Python sibling -- constructed, called, and passed against the real installed
-`photonlibpy==2026.3.4` package earlier in this same overall effort -- while the
-competition port's own pattern, though real production code, was only read, never
-run, in this particular Java session. Evidence that something actually executed
-successfully once beats evidence that something merely compiles by inspection, which
-is why this file mirrors the tested pattern instead of the unverified-here one, even
-though the unverified-here one is what this team's own real robot runs. **If
+per camera. Both patterns exist in PhotonLib for the 2026 season, per the vendor docs.
+**This pattern has not been verified against the installed Java `v2026.3.2` PhotonLib
+package** -- this file was read and reasoned about, never compiled or run, in this
+session (see the top of this section). This file uses the 2-arg-constructor-plus-
+multi-tag-estimate pattern anyway because it names the specific PhotonPoseEstimator
+methods being exercised (`estimateCoprocMultiTagPose()` for the common multi-tag case,
+falling back explicitly to `estimateLowestAmbiguityPose()`) rather than delegating that
+choice to a `PoseStrategy` enum value whose internal fallback behavior is opaque from
+the call site -- a rookie reading this file can see exactly which estimation method
+ran without also reading PhotonLib's own source for what `MULTI_TAG_PNP_ON_COPROCESSOR`
+does internally. That is a real, if modest, teaching-clarity reason to prefer it here,
+but it is **not** evidence that this pattern is the one PhotonLib actually expects, or
+that it compiles at all -- unlike the competition port's own pattern, which is real
+production code even though it too was only read, never run, in this session. **If
 `./gradlew build` fails inside `Vision.java`, this constructor call and the two
 `estimate*Pose()` method names are the first place to check** -- see that file's own
 class-level Javadoc for the same explanation in place, right next to the code it's
@@ -94,11 +96,8 @@ rather than smoothing over:**
   internal PID chain never converges (an edge-of-field target, a stalled drivetrain,
   oscillation), the driver can't preempt it with the default teleop command and loses
   stick control until it resolves on its own. This is a real, undisclosed-until-now
-  safety gap -- but it is not unique to this Java branch: the already-tested Python
-  sibling's own `robotcontainer.py` binds `ApproachTagCommand` the exact same way,
-  with no timeout either. It's therefore documented here as a shared, cross-language
-  design point rather than patched only on the Java side, which would have silently
-  broken the 1:1 comparison this whole project exists to support. See
+  safety gap, worth fixing rather than leaving in place just because it mirrors the
+  pattern `FireCommand`'s own binding already avoids. See
   [Assumptions that need bench verification](#assumptions-that-need-bench-verification)
   below.
 
@@ -110,8 +109,7 @@ rather than smoothing over:**
   numbers (tag ID, standoff distances, turn offset).
 - **New file, `VisionMeasurement.java`** -- a `record` bundling one vision pose fix
   (`estimatedPose`, `timestampSeconds`, `standardDeviations`, `numTagsUsed`). See that
-  file's own Javadoc for why `record` is the right tool here, and how it compares to
-  Python's `@dataclass(frozen=True)`.
+  file's own Javadoc for why `record` is the right tool here.
 - **New file, `subsystems/Vision.java`** -- the new subsystem. See
   [Pose estimation](#pose-estimation-from-odometry-to-a-pose-estimator) and
   [How Vision decides a measurement is trustworthy](#how-vision-decides-a-measurement-is-trustworthy)
@@ -162,17 +160,16 @@ Two things worth explaining, since both are easy to get backwards:
   camera is centered; height is a straight foot-to-meter conversion since
   `Translation3d`'s Z axis is already "up" from the floor.
 - **Negative pitch tilts the camera up, not down.** `Rotation3d`'s pitch convention
-  is easy to get backwards by guessing. This exact sign convention WAS verified
-  directly, but against the Python sibling's installed `wpimath` package, not this
-  branch's own Java one (see [Verification status](#verification-status) above for
-  why that gap exists in this session): rotating a "straight ahead" translation by
-  `Rotation3d(0, pitch, 0)` gave a negative pitch a positive Z component (tilted up).
-  Java and Python `wpimath` share the same underlying C++ geometry implementation, so
-  this convention should carry over unchanged -- but "should," not "was independently
-  confirmed here," is the honest way to describe it. Worth a rookie re-running that
-  same one-line experiment in Java once a build environment exists, rather than
-  taking this comment on faith -- that's the whole point of writing it down as a
-  claim someone can check, instead of a fact.
+  is easy to get backwards by guessing, and **this sign convention has not been
+  independently verified in this session** -- it is asserted from `wpimath`'s own
+  documented convention for `Rotation3d`'s pitch component (rotating a "straight
+  ahead" translation by `Rotation3d(0, pitch, 0)` is documented to give a negative
+  pitch a positive Z component, i.e. tilted up), not confirmed by actually running
+  that rotation and inspecting the result, since this project has not been compiled
+  or run at all (see [Verification status](#verification-status) above). Worth a
+  rookie running that one-line experiment in Java once a build environment exists,
+  rather than taking this comment on faith -- that's the whole point of writing it
+  down as a claim someone can check, instead of a fact.
 
 ## Pose estimation: from odometry to a pose estimator
 
@@ -263,17 +260,16 @@ driverController.x().onTrue(
 ```
 
 Neither binding has a `.withTimeout(...)`, unlike `FireCommand`'s -- see
-[Verification status](#verification-status) above for why that's a real, if shared
-with the Python sibling, gap worth a rookie noticing.
+[Verification status](#verification-status) above for why that's a real gap worth a
+rookie noticing.
 
 Both are the same command class, parameterized -- **not** two near-duplicate classes
 the way `RaiseElevatorCommand`/`LowerElevatorCommand` are. That's a deliberate
 exception to this project's usual "each distinct behavior gets its own named class"
 convention, made because these two behaviors share the entire 3-phase state machine
 below and differ by exactly one number (`faceOffsetDegrees`, defaulted to `0.0` via a
-second, shorter constructor overload -- Java has no default-parameter-value syntax
-the way Python's `face_offset_degrees: float = 0.0` does, so an overload is the
-idiomatic Java equivalent). Two copies of that state machine would mean any future
+second, shorter constructor overload -- Java has no default-parameter-value syntax,
+so an overload is the idiomatic Java equivalent). Two copies of that state machine would mean any future
 bugfix to the turn/drive/turn sequence has to be applied twice and could silently
 drift apart; one parameterized class can't drift from itself.
 
@@ -314,8 +310,8 @@ both *drive*.
 
 New in this branch: `VisionTest.java`, `commands/ApproachTagCommandTest.java`, and
 one regression test added to `subsystems/DriveTrainTest.java`
-(`driveDistanceCommandDoesNotCorruptPoseBetweenLegs`, a Java translation of the
-Python sibling's own regression test for the bug described in
+(`driveDistanceCommandDoesNotCorruptPoseBetweenLegs`, a regression test for the bug
+described in
 [Design decisions](#design-decisions-and-deliberate-simplifications) below).
 
 **A second package-private-for-testability exception, and why one exception led to
@@ -325,8 +321,7 @@ another.** `DriveTrainTest.java` already needed `DriveTrain.leftEncoder`/
 could poke simulated encoder position directly. `ApproachTagCommand.java` needed the
 same kind of access for its own internal `phase`/`targetPoint`/`turnPid`/`drivePid`
 fields, so `ApproachTagCommandTest.java` can check the command's state-machine
-progress the same way the Python sibling's test reaches its `_phase`/`_target_point`/
-`_turn_pid`/`_drive_pid` past Python's naming-convention-only privacy. That test
+progress directly. That test
 therefore has to live in `frc.robot.commands` (where `ApproachTagCommand` itself
 lives) -- but it *also* needs to poke `DriveTrain`'s encoders to fake a driven
 distance mid-test, and package-private access never spans two different packages no
@@ -334,16 +329,16 @@ matter how either side is declared: a test can be a member of `frc.robot.command
 `frc.robot.subsystems`, never both at once. Rather than force one package-private
 trick to do a job it structurally cannot, `DriveTrain` gained one small, honestly
 named `public` method, `setEncoderPositionsForTest(double, double)`, whose Javadoc
-says exactly what it's for and why it exists. Three real lessons in one small corner
-of this codebase: Java's `private` is enforced in a way Python's naming convention
-never is; package-private is the standard fix for a same-package test that needs
-past that enforcement; and package-private has a hard structural limit -- once a
-test's need spans two different production packages, a plain `public` method,
-clearly labeled, is the more honest tool than trying to bend visibility rules to fit.
+says exactly what it's for and why it exists. Two real lessons in one small corner
+of this codebase: package-private is the standard fix for a same-package test that
+needs past Java's `private` enforcement; and package-private has a hard structural
+limit -- once a test's need spans two different production packages, a plain
+`public` method, clearly labeled, is the more honest tool than trying to bend
+visibility rules to fit.
 
-Everything else about running these tests -- no bundled fixture equivalent to
-pyfrc's `robot`/`control`, `HAL.initialize()`/`DriverStationSim`/`SimHooks` used
-explicitly in every file's `@BeforeEach`, no physics simulation wired into this
+Everything else about running these tests -- `HAL.initialize()`/`DriverStationSim`/
+`SimHooks` used explicitly in every file's `@BeforeEach`, no physics simulation
+wired into this
 project's Gradle build so nothing overwrites a poked sensor value on its own -- is
 unchanged from `teaching-bot-poc-java`'s README; see that file for the full
 explanation.
@@ -437,11 +432,8 @@ their definition in `Constants.VisionConstants`:
 - **`ApproachTagCommand` has no `.withTimeout(...)` at either binding** (see
   [Verification status](#verification-status) above) -- if its internal PID chain
   never converges, the driver can't preempt it with the default teleop command.
-  This matches the already-tested Python sibling's own bindings exactly, so it's a
-  shared design point across both language ports rather than something introduced
-  here, but it's a real gap worth fixing (in both projects, together, so the
-  comparison stays fair) before this pattern is ever bound on hardware that can
-  actually hurt someone. A reasonable fix: wrap both bindings in
+  It's a real gap worth fixing before this pattern is ever bound on hardware that
+  can actually hurt someone. A reasonable fix: wrap both bindings in
   `.withTimeout(...)`, the same decorator `FireCommand`'s binding already uses, with
   a new `VisionConstants` constant for the timeout duration.
 - **The `PhotonPoseEstimator` construction pattern itself** (see
@@ -449,7 +441,7 @@ their definition in `Constants.VisionConstants`:
   question to settle, not just a code style preference, once a real build/test
   environment exists: does `estimateCoprocMultiTagPose()`/
   `estimateLowestAmbiguityPose()` actually exist with those exact names in the
-  installed `v2026.3.2` PhotonLib Java jar the way they do in `photonlibpy`? If not,
+  installed `v2026.3.2` PhotonLib Java jar? If not,
   this file needs to move to the competition port's `PoseStrategy`-based pattern
   instead, and this README's framing of that choice was wrong.
 - **`DriveTrain.resetPose()` resets the hardware encoders; the real competition
@@ -482,11 +474,7 @@ import edu.wpi.first.math.numbers.N3;
  * (2026_competition_code) -- see that repo's Constants.java. Nothing functional lives
  * here, only numbers/IDs.
  *
- * <p>A note for anyone coming from the Python sibling of this project
- * (teaching-bot-poc, in this same repo): Python's constants.py used a plain class per
- * subsystem with bare {@code ALL_CAPS = value} attributes -- Python doesn't require a
- * value to be typed, and a class attribute is "constant" purely by convention (nothing
- * stops code from reassigning it). Java has no such convention-only option: every field
+ * <p>Java has no way to declare a "constant" by naming convention alone: every field
  * needs a declared type ({@code int}, {@code double}, {@code boolean}, ...), and making
  * it an actual, enforced constant needs two keywords together:
  * <ul>
@@ -705,16 +693,14 @@ public final class Constants {
         // since the center is 16 inches from the front -- 1 foot above the floor,
         // angled 15 degrees upward.
         //
-        // Sign convention verified directly (not assumed) against the Python sibling's
-        // installed wpimath package earlier in this project's development: rotating
-        // Translation3d(1, 0, 0) -- "straight ahead" -- by Rotation3d(0, pitch, 0) gives
-        // a NEGATIVE pitch a positive Z component (tilted up) and a POSITIVE pitch a
-        // negative Z component (tilted down). "Angled upward" is therefore a negative
-        // pitch here -- worth double-checking against whichever WPILib version is
-        // installed if this is ever copied elsewhere, since it's easy to get backwards.
-        // wpimath's Java and Python builds share the same underlying C++ geometry
-        // implementation, so this convention carries over unchanged, but it was not
-        // re-verified against the Java package specifically (see README).
+        // Sign convention taken from wpimath's documented Rotation3d pitch behavior, NOT
+        // independently verified by running it in this project (see README): rotating
+        // Translation3d(1, 0, 0) -- "straight ahead" -- by Rotation3d(0, pitch, 0) is
+        // documented to give a NEGATIVE pitch a positive Z component (tilted up) and a
+        // POSITIVE pitch a negative Z component (tilted down). "Angled upward" is
+        // therefore a negative pitch here -- worth double-checking against whichever
+        // WPILib version is installed if this is ever copied elsewhere, since it's easy
+        // to get backwards.
         public static final Transform3d ROBOT_TO_CAMERA = new Transform3d(
             new Translation3d((16.0 - 3.0) * 0.0254, 0.0, 1.0 * 0.3048),
             new Rotation3d(0.0, Math.toRadians(-15.0), 0.0)
@@ -823,21 +809,20 @@ import edu.wpi.first.wpilibj2.command.TimedCommandRobot;
  *
  * <p>{@code TimedCommandRobot} does two things a plain {@code TimedRobot} would leave
  * to you: it calls {@code CommandScheduler.getInstance().run()} every loop
- * automatically (Python's {@code commands2.TimedCommandRobot} does the same), and it
+ * automatically, and it
  * still gives you the familiar {@code robotInit()}/{@code autonomousInit()}/
  * {@code teleopInit()}/... callback methods to override.
  *
  * <p>No AdvantageKit, no vision-specific logging (unlike the real competition port's
  * {@code Robot.java}, which extends AdvantageKit's {@code LoggedRobot}) -- just
- * {@link DataLogManager} for on-disk + NetworkTables logging, matching the Python
- * teaching-bot's {@code robot.py} exactly.
+ * {@link DataLogManager} for on-disk + NetworkTables logging, kept deliberately simple
+ * for teaching purposes.
  */
 public class Robot extends TimedCommandRobot {
     // `Command` (an interface/abstract class) is the TYPE; `m_autonomousCommand` can
     // hold `null` (no autonomous command selected) or any object that implements
-    // Command. Python's equivalent used `Optional[Command] = None` as a type hint --
-    // Java has no separate "nullable" annotation built into the language the way
-    // Python's `Optional[X]` is; ANY non-primitive Java type (anything that isn't
+    // Command. Java has no separate "nullable" annotation built into the language;
+    // ANY non-primitive Java type (anything that isn't
     // `int`/`double`/`boolean`/etc.) can already hold `null`, so `Command` alone is the
     // whole type, and `null` is a value it can take on without any extra syntax.
     private Command m_autonomousCommand;
@@ -958,11 +943,7 @@ public class RobotContainer {
 
     /**
      * {@code CommandXboxController} is the current, non-deprecated way to bind
-     * buttons to commands for an Xbox-style controller as of WPILib 2026 -- the same
-     * class name in both the Java and Python bindings (Python's is a thin wrapper
-     * around this very Java/C++ implementation, which is why the class names and
-     * method names on it already match almost exactly between the two languages,
-     * unlike REVLib/Phoenix6/Studica's separately-written Java and Python APIs).
+     * buttons to commands for an Xbox-style controller as of WPILib 2026.
      */
     public RobotContainer() {
         configureDefaultCommands();
@@ -1066,9 +1047,7 @@ import edu.wpi.first.math.numbers.N3;
  * a constructor, a getter for each field (named after the field itself, with no
  * {@code get} prefix -- {@code measurement.estimatedPose()}, not
  * {@code measurement.getEstimatedPose()}), and correct {@code equals()}/
- * {@code hashCode()}/{@code toString()} -- without writing any of that by hand. It's
- * the closest Java equivalent to Python's {@code @dataclass(frozen=True)}, used for
- * the exact same purpose on the Python sibling's own {@code VisionMeasurement}. This
+ * {@code hashCode()}/{@code toString()} -- without writing any of that by hand. This
  * project's real competition port ({@code 2026_competition_code}) uses this same
  * {@code record} pattern for its own {@code VisionMeasurement} class, accessed the
  * same parenthesized way ({@code measurement.estimatedPose()},
@@ -1076,12 +1055,9 @@ import edu.wpi.first.math.numbers.N3;
  * confirmed from, rather than guessed.
  *
  * <p>{@code standardDeviations} is a {@code Matrix<N3, N1>} (a 3-row, 1-column
- * matrix) rather than a plain 3-tuple the way the Python sibling wrote it -- Java's
+ * matrix), since Java's
  * {@code DifferentialDrivePoseEstimator.addVisionMeasurement(...)} takes its standard
- * deviations as this typed matrix, built with {@code VecBuilder.fill(x, y, theta)};
- * RobotPy's Python binding for the same underlying method instead accepts a plain
- * tuple, which is why the two sibling projects' constants differ in shape here even
- * though they encode the exact same three numbers.
+ * deviations as this typed matrix, built with {@code VecBuilder.fill(x, y, theta)}.
  */
 public record VisionMeasurement(
     Pose2d estimatedPose,
@@ -1139,8 +1115,7 @@ import java.util.Optional;
  * full reasoning behind that split, and commands/ for this subsystem's four commands
  * (teleop drive, drive-to-distance, turn-to-angle, reset gyro).
  *
- * <p>{@code extends SubsystemBase} is Java's equivalent of Python's
- * {@code class DriveTrain(Subsystem):} -- {@code SubsystemBase} is the WPILib base
+ * <p>{@code SubsystemBase} is the WPILib base
  * class that registers this object with the CommandScheduler and gives it a default,
  * do-nothing {@code periodic()} to override.
  *
@@ -1151,9 +1126,8 @@ import java.util.Optional;
  * {@code DifferentialDrivePoseEstimator}, which does the same encoder+gyro
  * integration AND periodically corrects itself using AprilTag detections from the
  * Vision subsystem ({@code subsystems/Vision.java}) -- exactly the drift-correction
- * the previous branch's README named as the reason to add vision next. This is the
- * same swap, in the same order, that the Python sibling's {@code teaching-bot-vision}
- * branch makes to its own {@code DriveTrain}. {@code DriveTrain} doesn't do any of
+ * the previous branch's README named as the reason to add vision next.
+ * {@code DriveTrain} doesn't do any of
  * the actual camera/AprilTag work itself; it just calls
  * {@code vision.getBestVisionMeasurementIfFresh()} every loop and, if there's a
  * fresh one, folds it in via {@code addVisionMeasurement()}. This constructor
@@ -1190,9 +1164,8 @@ public class DriveTrain extends SubsystemBase {
     // own methods can reach it directly (an outside caller has to go through a public
     // method like drive() or getLeftDistanceMeters() instead); `final` means the field
     // is assigned exactly once -- here, right where it's declared -- and can never be
-    // reassigned to point at a different SparkMax object afterward. Unlike Python,
-    // where "private" is only the `_` naming convention this project's own style guide
-    // enforces, Java's `private` is a real access restriction the compiler checks.
+    // reassigned to point at a different SparkMax object afterward. Java's `private`
+    // is a real access restriction the compiler checks.
     private final SparkMax leftLead = new SparkMax(LEFT_LEAD_CAN_ID, MotorType.kBrushless);
     private final SparkMax leftFollow = new SparkMax(LEFT_FOLLOW_CAN_ID, MotorType.kBrushless);
     private final SparkMax rightLead = new SparkMax(RIGHT_LEAD_CAN_ID, MotorType.kBrushless);
@@ -1207,12 +1180,10 @@ public class DriveTrain extends SubsystemBase {
     // deliberate exception to the `private` rule every other hardware field on this
     // page follows. DriveTrainTest.java (in this same frc.robot.subsystems package)
     // needs to poke these two objects' simulated position directly with
-    // `.setPosition(...)` to test odometry and the PID commands without a real robot --
-    // the Python sibling's equivalent test does the same thing by reaching past its
-    // `_left_encoder`'s leading-underscore naming CONVENTION, since Python has no
-    // enforced privacy to get past. Java's `private` is enforced by the compiler with
-    // no such loophole, so getting the same test access here needs an actual, coarser
-    // access level instead of a bypassable naming hint. Package-private is the
+    // `.setPosition(...)` to test odometry and the PID commands without a real robot.
+    // Java's `private` is enforced by the compiler with
+    // no loophole to reach past, so getting the same test access here needs an actual,
+    // coarser access level instead of a bypassable naming hint. Package-private is the
     // narrowest level that still works: any class in frc.robot.subsystems can reach
     // these fields, but nothing outside that package (including RobotContainer.java,
     // in frc.robot) can -- a real, if slightly wider, restriction, not merely a polite
@@ -1313,8 +1284,7 @@ public class DriveTrain extends SubsystemBase {
         // A SparkMaxConfig object describes a full desired configuration; it doesn't
         // take effect until passed to .configure(). This "build a config object, then
         // apply it" two-step (rather than one call per setting) is REVLib's pattern for
-        // every SparkMax on this robot -- identical in Java and Python, just with
-        // camelCase method names either way (REVLib's Java API was never snake_cased).
+        // every SparkMax on this robot, with camelCase method names throughout.
         //
         // positionConversionFactor/velocityConversionFactor rescale the raw "motor
         // shaft rotations" the encoder actually measures into "meters the robot has
@@ -1526,9 +1496,7 @@ public class DriveTrain extends SubsystemBase {
         // actual drift correction: nothing here has to know HOW the measurement was
         // computed, only that it's a (pose, timestamp, confidence) triple the
         // estimator can weigh against its own dead-reckoned belief. `Optional`'s
-        // `ifPresent(...)` runs the given block only when a value is actually there,
-        // the Java equivalent of the Python sibling's
-        // `if measurement is not None: ...`.
+        // `ifPresent(...)` runs the given block only when a value is actually there.
         Optional<VisionMeasurement> measurement = vision.getBestVisionMeasurementIfFresh();
         measurement.ifPresent(m ->
             poseEstimator.addVisionMeasurement(m.estimatedPose(), m.timestampSeconds(), m.standardDeviations())
@@ -1684,10 +1652,8 @@ public class Gripper extends SubsystemBase {
     /**
      * {@code speed} is a duty cycle in [-1, 1]: positive intakes, negative ejects -- see
      * {@code GripperConstants.INTAKE_SPEED}/{@code EJECT_SPEED}. The parameter is
-     * written {@code double speed} rather than {@code speed: float} the way Python
-     * wrote it -- Java always puts the type BEFORE the name, with no colon, for every
-     * parameter and every field in this project; Python puts the type AFTER the name,
-     * with a colon, and only when someone chooses to add the (optional) hint.
+     * written {@code double speed} -- Java always puts the type BEFORE the name, with
+     * no colon, for every parameter and every field in this project.
      */
     public void setSpeed(double speed) {
         rollerMotor.set(speed);
@@ -1728,14 +1694,12 @@ import edu.wpi.first.wpilibj2.command.SubsystemBase;
  * distance-based RPM table (no vision on this robot) -- just a single configurable
  * target speed. Demonstrates Phoenix 6's velocity-control pattern.
  *
- * <p>Unlike REVLib and Studica's Java bindings, whose method names read almost
- * identically to their Python counterparts (just camelCase instead of snake_case),
- * Phoenix 6's Java enum constant names use their own capitalization
- * ({@code InvertedValue.Clockwise_Positive}) that differs even in capitalization
- * convention from the same enum in Python ({@code InvertedValue.CLOCKWISE_POSITIVE})
- * -- CTRE's Java and Python bindings were written somewhat independently. Worth noting
- * explicitly the first time a rookie moving between this Java project and its Python
- * sibling hits it.
+ * <p>Worth noting explicitly the first time a rookie hits it: Phoenix 6's Java enum
+ * constant names use their own capitalization
+ * ({@code InvertedValue.Clockwise_Positive}) rather than the all-caps
+ * {@code SNAKE_CASE} Java convention used for enum constants everywhere else in this
+ * codebase -- CTRE's own naming choice for this particular library, not a Java
+ * language rule.
  *
  * <p>Like the other subsystems, this file only exposes plain hardware actions
  * ({@code setTargetRpm()}, {@code stop()}, the getters) -- the actual Command that uses
@@ -1882,8 +1846,7 @@ public class Trigger extends SubsystemBase {
      * constants and their TODOs -- this is exactly the kind of thing that must be
      * checked on the real robot, since guessing wrong here silently inverts the
      * sensor's meaning). {@code cond ? a : b} is Java's ternary operator -- "if cond is
-     * true, this whole expression's value is a, otherwise it's b" -- the closest Java
-     * equivalent to Python's {@code a if cond else b}.
+     * true, this whole expression's value is a, otherwise it's b".
      */
     public boolean isAtHome() {
         boolean raw = limitSwitch.get();
@@ -1969,12 +1932,13 @@ import org.photonvision.targeting.PhotonTrackedTarget;
  * (no strategy argument), and calls the strategy-specific
  * {@code estimateCoprocMultiTagPose(result)} method directly, falling back to
  * {@code estimateLowestAmbiguityPose(result)} when multi-tag PNP data isn't
- * available. Both patterns exist in PhotonLib for the 2026 season -- this file's
- * choice was the one actually verified end to end in this project's Python sibling
- * (constructed, called, and passed 4/4 tests against the real installed
- * {@code photonlibpy==2026.3.4} package in the session that wrote it), so it's the
- * pattern this Java file mirrors, even though it differs from what the competition
- * repo's own (unverified against this exact vendor version) code happens to use. See
+ * available. Both patterns exist in PhotonLib for the 2026 season, per the vendor
+ * docs. <b>This pattern has not been verified against the installed Java
+ * {@code v2026.3.2} PhotonLib package</b> -- this file was read and reasoned about,
+ * never compiled or run. It names the specific PhotonPoseEstimator methods being
+ * exercised, rather than delegating that choice to an opaque {@code PoseStrategy}
+ * value, which is a real teaching-clarity reason to prefer it here -- but that is
+ * not evidence it compiles or matches the installed jar's actual API. See
  * the README's Verification status section for the full reasoning.
  */
 public class Vision extends SubsystemBase {
@@ -2094,9 +2058,10 @@ public class Vision extends SubsystemBase {
         double timestamp = result.getTimestampSeconds();
 
         // A camera that has never sent a real result reports a placeholder timestamp
-        // near zero (verified directly against the Python sibling's installed
-        // photonlibpy package: -1e-06, not the -1.0 this class starts
-        // lastResultTimestamp at) -- the `timestamp > 0` check is what keeps that
+        // near zero (per PhotonLib's documented behavior: -1e-06, not the -1.0 this
+        // class starts lastResultTimestamp at -- this exact value has not been
+        // confirmed by actually running this Java code, see README) -- the
+        // `timestamp > 0` check is what keeps that
         // placeholder from being mistaken for an actual fresh frame the very first
         // time periodic() runs.
         if (timestamp > 0 && timestamp > lastResultTimestamp) {
@@ -2192,12 +2157,10 @@ public class ApproachTagCommand extends Command {
     // exception documented on DriveTrain's leftEncoder/rightEncoder fields
     // (subsystems/DriveTrain.java). ApproachTagCommandTest.java (in this same
     // frc.robot.commands package) needs to read `phase`/`targetPoint`/`turnPid`/
-    // `drivePid` directly to check this command's state-machine progress the same
-    // way the Python sibling's test reaches its `_phase`/`_target_point`/
-    // `_turn_pid`/`_drive_pid` past Python's naming-convention-only privacy. Java's
-    // `private` has no such loophole, so getting the same test access here needs an
-    // actual, coarser access level -- package-private is the narrowest one that
-    // still works.
+    // `drivePid` directly to check this command's state-machine progress. Java's
+    // `private` has no loophole to reach past, so getting the same test access here
+    // needs an actual, coarser access level -- package-private is the narrowest one
+    // that still works.
     enum Phase {
         TURN_TO_TARGET,
         DRIVE_TO_TARGET,
@@ -2261,10 +2224,9 @@ public class ApproachTagCommand extends Command {
     /**
      * Overload matching this project's two actual bindings (both use
      * {@code faceOffsetDegrees = 0.0}, "stop facing the tag directly") -- Java has no
-     * default-parameter-value syntax the way Python's {@code face_offset_degrees:
-     * float = 0.0} does, so an overload is the idiomatic Java equivalent: a second,
-     * shorter constructor that just calls the full one with a fixed value for the
-     * argument callers usually don't need to give.
+     * default-parameter-value syntax, so an overload is the idiomatic Java equivalent: a
+     * second, shorter constructor that just calls the full one with a fixed value for
+     * the argument callers usually don't need to give.
      */
     public ApproachTagCommand(DriveTrain drivetrain, Vision vision, int tagId, double standoffFeet) {
         this(drivetrain, vision, tagId, standoffFeet, 0.0);
@@ -2883,17 +2845,11 @@ public class TeleopDriveCommand extends Command {
      *       TeleopDriveCommand(...)}. Compare this to {@code private} fields like
      *       {@code drivetrain} above: those can only be read by code written inside
      *       this very class. Java requires an explicit access modifier decision like
-     *       this on every field and method; Python has no equivalent keyword; it only
-     *       has the {@code _leadingUnderscore} naming CONVENTION this whole project
-     *       already uses to mean the same thing, which nothing in the language itself
-     *       enforces.</li>
-     *   <li><b>{@code DriveTrain drivetrain}</b> -- a parameter. Unlike Python, where
-     *       a type hint after a colon ({@code drivetrain: DriveTrain}) is optional
-     *       and checked only by external tools (never by the Python interpreter
-     *       itself), Java requires every parameter to have a declared type, written
+     *       this on every field and method, enforced by the compiler.</li>
+     *   <li><b>{@code DriveTrain drivetrain}</b> -- a parameter. Java requires every
+     *       parameter to have a declared type, written
      *       BEFORE the name with no colon, and the compiler itself refuses to compile
-     *       code that passes the wrong type here -- there is no way to skip this in
-     *       Java the way an un-annotated Python parameter skips it.</li>
+     *       code that passes the wrong type here.</li>
      *   <li><b>{@code CommandXboxController driverController}</b> -- the physical Xbox
      *       controller plugged into port 0 (see {@code Constants.OperatorConstants
      *       .DRIVER_CONTROLLER_PORT}, and RobotContainer.java, where the real
@@ -2907,30 +2863,23 @@ public class TeleopDriveCommand extends Command {
      *       A constructor is the one exception: it implicitly builds and returns the
      *       new object, and Java's grammar does not allow ANY return-type keyword to
      *       be written on this line, {@code void} included -- writing one is a syntax
-     *       error, not just bad style. Python's {@code __init__(self, ...) -> None} is
-     *       different in exactly this respect: Python DOES allow (and this project's
-     *       Python sibling uses) an explicit {@code -> None} annotation on
-     *       {@code __init__}, because in Python {@code __init__} is an ordinary method
-     *       that happens to conventionally return {@code None} -- Java's constructor
+     *       error, not just bad style. A constructor
      *       is a distinct kind of member with its own grammar rule forbidding a return
      *       type outright.</li>
      *   <li><b>{@code super(); }-- wait, there is no {@code super()} call written
-     *       here.</b> Every command's constructor in this project's Python sibling
-     *       starts with an explicit {@code super().__init__()}. In Java, if a
+     *       here.</b> In Java, if a
      *       constructor's first line does NOT explicitly call {@code super(...)}, the
      *       compiler automatically inserts a call to the parent class's no-argument
      *       constructor for you, as if it were the first line. {@code Command}'s own
      *       no-argument constructor does the setup this class needs, so nothing
-     *       explicit is required here -- unlike Python, where {@code __init__} is
-     *       never called automatically and always has to be invoked by name.</li>
+     *       explicit is required here.</li>
      * </ul>
      */
     public TeleopDriveCommand(DriveTrain drivetrain, CommandXboxController driverController) {
         this.drivetrain = drivetrain;
         this.driverController = driverController;
         // `this.drivetrain = drivetrain;` -- the field and the parameter share the
-        // same name on purpose (this project's Java convention, mirroring the Python
-        // sibling's `self._drivetrain = drivetrain`), which means `this.` in front of
+        // same name on purpose (this project's Java convention), which means `this.` in front of
         // the left-hand side is not optional decoration here: without it, `drivetrain
         // = drivetrain;` would just assign the parameter to itself and leave the
         // field permanently unset. `this.` explicitly means "the field belonging to
@@ -3052,10 +3001,8 @@ public final class AutoChooser {
 
     /**
      * {@code SendableChooser<Command>} -- the angle brackets are a Java GENERIC type
-     * parameter: this says "a SendableChooser whose options are all Command objects,"
-     * the same idea as Python's {@code SendableChooser} which can hold any type of
-     * option but here is used consistently with Command values. Unlike Python (which
-     * doesn't check this at all at runtime), Java's compiler uses the {@code <Command>}
+     * parameter: this says "a SendableChooser whose options are all Command objects."
+     * Java's compiler uses the {@code <Command>}
      * to guarantee every option ever added to (or read from) this specific chooser
      * really is a Command, catching a wrong-type mistake at compile time instead of
      * only when the mistaken value is actually used.
@@ -3094,13 +3041,11 @@ import frc.robot.subsystems.DriveTrain;
  * internally (see its constructor), so nothing in this file ever touches metric units.
  *
  * <p>{@code final class AutoRoutines} with a {@code private AutoRoutines() {}}
- * constructor and only {@code static} methods is Java's usual stand-in for a Python
- * module of free functions: Python's {@code autonomous/routines.py} could just define
- * {@code def drive_forward_only(drivetrain): ...} at the top level of a file, since
- * Python allows functions to exist outside any class. Java requires every method to
+ * constructor and only {@code static} methods is Java's usual stand-in for a
+ * module of free functions. Java requires every method to
  * live inside some class, so a class that is never instantiated (only ever referenced
  * as {@code AutoRoutines.driveForwardOnly(...)}) is the idiomatic way to group a small
- * set of related, state-free functions the way Python would with a module.
+ * set of related, state-free functions.
  */
 public final class AutoRoutines {
     private AutoRoutines() {}
@@ -3147,8 +3092,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for Elevator's limit-switch-gated raise/lower commands -- a Java
- * translation of the Python sibling's {@code test_elevator.py}. {@link DIOSim} is
+ * Unit tests for Elevator's limit-switch-gated raise/lower commands.
+ * {@link DIOSim} is
  * keyed by DIO port number, not by reaching into any object, so no visibility changes
  * to Elevator.java were needed to write this file the way DriveTrainTest.java needed
  * one for the SparkMax encoders.
@@ -3242,14 +3187,10 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Smoke test: step the whole robot through disabled -&gt; autonomous -&gt; teleop and
- * confirm nothing throws. This is a Java translation of the Python sibling's
- * {@code test_robot_lifecycle.py}.
+ * confirm nothing throws.
  *
- * <p>Python's version runs under pyfrc's pytest plugin, which provides ready-made
- * {@code robot}/{@code control} fixtures ({@code control.step_timing(...)} advances
- * simulated time AND flips the enabled/autonomous mode flags in one call). WPILib's
- * Java toolchain has no equivalent plugin, so this file does by hand what that fixture
- * did for free: {@link HAL#initialize} boots the simulated hardware layer,
+ * <p>This file does by hand what a fixture-based
+ * test framework would automate: {@link HAL#initialize} boots the simulated hardware layer,
  * {@link DriverStationSim} sets the enabled/autonomous mode flags a real driver station
  * would set, and {@link SimHooks#stepTiming} advances the simulated clock and lets
  * {@link CommandScheduler} run its periodic loop the corresponding number of times.
@@ -3341,8 +3282,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for Trigger's FireCommand edge-detection state machine -- a Java
- * translation of the Python sibling's {@code test_trigger.py}.
+ * Unit tests for Trigger's FireCommand edge-detection state machine.
  *
  * <p>The cam has only one sensor (a limit switch at "home"), so "one fire" is defined
  * as: leave home, then come back to home. These tests exercise that logic directly
@@ -3457,8 +3397,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for the Vision subsystem's tag-pose lookup and availability reporting --
- * a Java translation of the Python sibling's {@code test_vision.py}.
+ * Unit tests for the Vision subsystem's tag-pose lookup and availability reporting.
  *
  * <p>There's no real camera or PhotonVision coprocessor in this test environment, so
  * these tests only cover what doesn't require actual camera data: the AprilTag field
@@ -3540,8 +3479,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for ApproachTagCommand's target computation and 3-phase state machine --
- * a Java translation of the Python sibling's {@code test_vision_commands.py}.
+ * Unit tests for ApproachTagCommand's target computation and 3-phase state machine.
  *
  * <p>This test class lives in {@code frc.robot.commands} (where {@code
  * ApproachTagCommand} itself lives), specifically so it can reach that command's
@@ -3550,7 +3488,7 @@ import org.junit.jupiter.api.Test;
  * why they aren't simply {@code private} the way most fields in this project are.
  *
  * <p>This project has no physics simulation wired into its Gradle build (see
- * DriveTrainTest.java's class-level comment), so unlike the Python tests, nothing
+ * DriveTrainTest.java's class-level comment), so nothing
  * here overwrites a poked encoder or gyro value on its own -- there's no
  * physics-engine-races-the-scheduler gotcha to work around.
  */
@@ -3683,8 +3621,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for DriveTrain's encoder-distance bookkeeping, odometry, kinematics, and
- * its PID autonomous commands -- a Java translation of the Python sibling's
- * {@code test_drivetrain.py}.
+ * its PID autonomous commands.
  *
  * <p>This test class lives in {@code frc.robot.subsystems} (not {@code frc.robot},
  * where most of this project's classes live) specifically so it can reach
@@ -3692,16 +3629,14 @@ import org.junit.jupiter.api.Test;
  * directly -- see the comment on those fields in DriveTrain.java for why they aren't
  * simply {@code private} the way every other hardware field in this project is.
  *
- * <p>This project has no physics simulation wired into its Gradle build the way the
- * Python sibling's {@code physics.py} is wired into {@code robotpy sim} (writing an
+ * <p>This project has no physics simulation wired into its Gradle build (writing an
  * equivalent {@code simulationPeriodic()} model is a good exercise, not done here) --
- * so unlike the Python tests, nothing here overwrites a poked encoder or gyro value on
- * its own. That actually makes these tests SIMPLER than their Python counterparts:
+ * so nothing here overwrites a poked encoder or gyro value on
+ * its own. That keeps these tests simpler:
  * there's no physics-engine-races-the-scheduler gotcha to work around, since nothing
  * is racing. The odometry tests below still call {@code drivetrain.periodic()}
- * directly, matching the Python sibling's own pattern, even though nothing here
- * strictly requires bypassing the scheduler the way the Python version does -- it
- * keeps the two test suites reading the same way line for line.
+ * directly, even though nothing here
+ * strictly requires bypassing the scheduler.
  */
 class DriveTrainTest {
 
@@ -3762,8 +3697,7 @@ class DriveTrainTest {
         // Simulate the robot having driven all the way there by writing the target
         // distance straight onto both encoders -- same RelativeEncoder.setPosition()
         // call configureMotors() itself uses to zero them at startup, just called with
-        // a nonzero value here. This is the direct Java equivalent of the Python
-        // test's `drivetrain._left_encoder.setPosition(target_meters)`.
+        // a nonzero value here.
         double targetMeters = 1.0 * Constants.METERS_PER_FOOT;
         drivetrain.leftEncoder.setPosition(targetMeters);
         drivetrain.rightEncoder.setPosition(targetMeters);
@@ -3781,9 +3715,7 @@ class DriveTrainTest {
         // Studica's AHRS exposes its simulated yaw through WPILib's generic
         // SimDeviceSim registry under the name "navX-Sensor[4]" rather than through a
         // method on the AHRS object itself -- the same mechanism (and the same
-        // device name) the real competition port's own physics simulation uses, and
-        // the same one the Python sibling's test pokes via
-        // `wpilib.simulation.SimDeviceSim("navX-Sensor[4]")`.
+        // device name) the real competition port's own physics simulation uses.
         SimDeviceSim navxSim = new SimDeviceSim("navX-Sensor[4]");
 
         TurnToAngleCommand command = new TurnToAngleCommand(drivetrain, 90.0);
@@ -3890,21 +3822,17 @@ Same reading order as `teaching-bot-odometry-java`, with two files added at the 
    why couldn't `DriveTrainTest.java`'s package-private trick be reused as-is for
    `ApproachTagCommandTest.java` -- what's actually different about the two
    situations?
-8. **Compare `commands/ApproachTagCommand.java` against
-   `commands/vision_commands.py`'s `ApproachTagCommand` side by side.** Nearly every
-   line has a direct counterpart -- `Translation2d.plus()`/`.minus()`/`.rotateBy()`
-   in Java vs. Python's operator-overloaded `+`/`-`/`.rotateBy()` is one of the few
-   genuinely new syntactic differences this branch introduces that the earlier two
-   Java branches' READMEs didn't already cover (Java has no operator overloading at
-   all, so every `+`/`-` on a `Translation2d` in the Python file becomes an explicit
-   `.plus(...)`/`.minus(...)` method call here) -- worth its own line in
-   `teaching-bot-poc-java`'s "Java vs. Python, line by line" table if that table
-   ever gets extended.
+8. **Notice that `ApproachTagCommand` never uses `+`/`-` directly on a
+   `Translation2d`.** Java has no operator overloading, so every geometric
+   combination goes through an explicit method call --
+   `Translation2d.plus()`/`.minus()`/`.rotateBy()` -- rather than a symbol. Worth
+   pointing out explicitly the first time a rookie hits it here, since it's one of
+   the few genuinely new syntactic points this branch introduces that the earlier
+   two branches' READMEs didn't already cover.
 
-Two mentors already know both languages by this point in the curriculum; the value
-of finishing this branch specifically is seeing how the SAME real bug
+The value of finishing this branch is seeing how one real bug
 (`DriveDistanceCommand` corrupting pose by resetting encoders it no longer owns
-exclusively) and the SAME real design tension (one parameterized command vs. two)
-were found and resolved identically in both languages, once each codebase reached
-the same point in its own development -- good evidence that these are lessons about
-robot software design, not lessons about either language specifically.
+exclusively) and one real design tension (one parameterized command vs. two) get
+found and resolved once a codebase reaches this point in its own development --
+good evidence that these are lessons about robot software design, not lessons tied
+to any one project's history.

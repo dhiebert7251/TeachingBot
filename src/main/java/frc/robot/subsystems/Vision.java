@@ -28,9 +28,10 @@ import org.photonvision.targeting.PhotonTrackedTarget;
  * {@code PhotonPoseEstimator} with an explicit {@code PoseStrategy.MULTI_TAG_PNP_ON_COPROCESSOR}
  * and calls {@code poseEstimator.update(result)}. This file instead uses the 2-arg
  * constructor and calls {@code estimateCoprocMultiTagPose()}/{@code estimateLowestAmbiguityPose()}
- * directly -- the pattern verified against the Python sibling's installed photonlibpy,
- * NOT verified against this project's own Java PhotonLib jar. See README Verification
- * status before trusting this in a build.
+ * directly, naming the specific estimation method used instead of delegating that
+ * choice to an opaque {@code PoseStrategy} value -- NOT verified against this
+ * project's own Java PhotonLib jar, since this project has not been compiled or run.
+ * See README Verification status before trusting this in a build.
  */
 public class Vision extends SubsystemBase {
 
