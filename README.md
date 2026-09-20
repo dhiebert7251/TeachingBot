@@ -191,11 +191,14 @@ package frc.robot.subsystems;
 // SubsystemBase; beyond that, typically the vendor/WPILib classes for whatever
 // motors/sensors this subsystem owns (see Gripper.java or Elevator.java for real
 // examples), plus SmartDashboard if this subsystem reports telemetry.
+// Example: import com.revrobotics.spark.SparkMax;
+// Example: import com.revrobotics.spark.SparkLowLevel.MotorType;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 
 /**
  * TODO: one-sentence description of the real-world mechanism this subsystem
  * controls (what hardware it owns, and in one clause, why it exists).
+ * Example: "Shooter subsystem -- single flywheel motor, no sensors."
  *
  * <p>A Subsystem owns exactly one piece of hardware, or one tightly-coupled group
  * of it, and exposes plain methods that Commands call to use it. A Subsystem
@@ -210,6 +213,7 @@ public class BlankSubsystem extends SubsystemBase {
     // test genuinely needs direct access -- see DriveTrain.java's
     // leftEncoder/rightEncoder fields and their comment for a real example of
     // that exception, and why it's package-private rather than public.
+    // Example: private final SparkMax leftMotor = new SparkMax(LEFT_MOTOR_ID, MotorType.kBrushless);
 
     /**
      * Constructor: construct and configure every hardware object this subsystem
@@ -219,6 +223,7 @@ public class BlankSubsystem extends SubsystemBase {
      */
     public BlankSubsystem() {
         // TODO: construct hardware objects and configure them.
+        // Example: leftMotor.setIdleMode(IdleMode.kBrake);
     }
 
     /**
@@ -235,12 +240,17 @@ public class BlankSubsystem extends SubsystemBase {
         // TODO: per-loop bookkeeping, if this subsystem needs any. It's fine to
         // leave this method out entirely (SubsystemBase's default does nothing)
         // if there's no per-loop work to do.
+        // Example: SmartDashboard.putNumber("BlankSubsystem/SpeedCommanded", leftMotor.get());
     }
 
     // Public methods: everything a Command needs in order to actually use this
     // subsystem goes here, as small, mechanical methods -- e.g. setSpeed(double),
     // isAtSetpoint(), a getter for the latest sensor reading. Keep the decision
     // of WHEN to call them out of this class; that belongs in a Command.
+    // Example:
+    // public void setSpeed(double speed) {
+    //     leftMotor.set(speed);
+    // }
 }
 ```
 
@@ -252,12 +262,14 @@ package frc.robot.commands;
 // Imports: WPILib's Command base class, plus whichever subsystem(s) this command
 // requires and any math/utility classes its logic needs (a PIDController, for
 // example -- see DriveDistanceCommand.java for a real one).
+// Example: import edu.wpi.first.math.controller.PIDController;
 import edu.wpi.first.wpilibj2.command.Command;
 import frc.robot.subsystems.BlankSubsystem;
 
 /**
  * TODO: one-sentence description of the real-world behavior this command
  * produces once it's scheduled.
+ * Example: "Spins the shooter flywheel up to a fixed target speed and holds it there."
  *
  * <p>A Command describes WHEN and IN WHAT ORDER to call a Subsystem's methods.
  * The decision-making belongs here; the Subsystem it uses should stay a thin
@@ -270,6 +282,7 @@ public class BlankCommand extends Command {
     // Additional fields: anything this command needs to remember between loop
     // iterations while it's running -- a target value, a baseline sensor reading
     // captured in initialize() below, a PIDController -- goes here.
+    // Example: private final PIDController pid = new PIDController(TARGET_KP, TARGET_KI, TARGET_KD);
 
     /**
      * Constructor: takes every subsystem and parameter this command needs, saves
@@ -295,6 +308,7 @@ public class BlankCommand extends Command {
         // TODO: one-time setup for this run of the command. It's fine to leave
         // this method out entirely if there's genuinely nothing to set up (see
         // EjectCommand.java/IntakeCommand.java for real examples that skip it).
+        // Example: pid.reset();
     }
 
     /**
@@ -306,6 +320,7 @@ public class BlankCommand extends Command {
     @Override
     public void execute() {
         // TODO: per-loop work while this command runs.
+        // Example: subsystem.setSpeed(pid.calculate(subsystem.getSpeed()));
     }
 
     /**
@@ -316,6 +331,7 @@ public class BlankCommand extends Command {
      * something meant to run until interrupted (like TeleopDriveCommand), wrong
      * for anything that should end automatically once a condition is met (like
      * DriveDistanceCommand reaching its target).
+     * Example: return pid.atSetpoint();
      */
     @Override
     public boolean isFinished() {
@@ -334,6 +350,7 @@ public class BlankCommand extends Command {
     public void end(boolean interrupted) {
         // TODO: cleanup that must happen whether this command finished normally
         // or was interrupted.
+        // Example: subsystem.stop();
     }
 }
 ```
