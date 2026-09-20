@@ -1,14 +1,11 @@
 # Teaching-Bot (Java): Odometry and Kinematics
 
-This is the **Java sibling** of `teaching-bot-odometry` (the Python branch of this
-same repo), which itself builds on `teaching-bot-poc`. This branch builds on
-`teaching-bot-poc-java` the same way: adding `DifferentialDriveKinematics` and
-`DifferentialDriveOdometry` to `DriveTrain`, plus a `Field2d` widget, so the robot
-tracks its estimated (X, Y, heading) position on the field from encoders and the
-gyro alone. Every other design decision -- explicit-class commands, no lambdas, the
-same physical robot -- carries over unchanged from `teaching-bot-poc-java`; see that
-branch's README for the full reasoning behind those, and for the general
-Java-vs-Python comparison material this README doesn't repeat.
+This branch builds on `teaching-bot-poc-java`, adding `DifferentialDriveKinematics`
+and `DifferentialDriveOdometry` to `DriveTrain`, plus a `Field2d` widget, so the
+robot tracks its estimated (X, Y, heading) position on the field from encoders and
+the gyro alone. Every other design decision -- explicit-class commands, no lambdas,
+the same physical robot -- carries over unchanged from `teaching-bot-poc-java`; see
+that branch's README for the full reasoning behind those.
 
 **Read this before anything else: this project has not been compiled or run.** See
 [Verification status](#verification-status) below.
@@ -46,12 +43,11 @@ against. It could **not** be independently confirmed against the installed 2026
 Java WPILib package the way `DifferentialDrivePoseEstimator`'s API was confirmed
 against the real competition port's actual source (that repo skips plain odometry
 entirely and goes straight to a pose estimator, so there was no real `.java` file to
-cross-check this specific accessor against). The Python sibling's equivalent
-(`self._odometry.getPose()`) was independently verified by actually running its
-tests in this same session, and RobotPy's `wpimath` bindings are generated directly
-from the same WPILib C++ core Java also wraps -- strong circumstantial evidence, not
-proof. **If `./gradlew build` reports a missing/renamed method here, this line is
-the first place to check.**
+cross-check this specific accessor against). This method name matches the pattern
+used consistently across every other `Odometry<T>` subclass in the WPILib API
+surface, which is reassuring but is not the same as having confirmed it against the
+actual installed jar. **If `./gradlew build` reports a missing/renamed method here,
+this line is the first place to check.**
 
 ## What changed from teaching-bot-poc-java
 
@@ -70,8 +66,8 @@ Only `subsystems/DriveTrain.java` and `src/test/java/frc/robot/subsystems/DriveT
   `DriveTrain/PoseXFeet`/`PoseYFeet`.
 - Four new tests in `DriveTrainTest.java`: `poseStartsAtOrigin`,
   `odometryTracksStraightLineDriving`, `resetPoseSeedsOdometryAndZeroesEncoders`,
-  `chassisSpeedsZeroWhenStopped` -- Java translations of the four the Python sibling
-  added for the same reason.
+  `chassisSpeedsZeroWhenStopped` -- covering the same four odometry behaviors that
+  motivate this branch's changes.
 
 Nothing else in the project (`Constants.java`, every command, every other
 subsystem, `RobotContainer.java`, autonomous) changed at all -- except `Robot.java`,
@@ -110,8 +106,7 @@ losing traction all introduce small errors that accumulate the longer the robot
 drives without a reset. That's not a bug to fix here; it's <i>the</i> reason
 vision-based correction is worth learning next, on `teaching-bot-vision-java`, which
 fuses AprilTag detections back into this same pose to correct that drift instead of
-trusting dead reckoning alone for an entire match -- identical framing to the
-Python sibling's own README at this exact point in its lineage.
+trusting dead reckoning alone for an entire match.
 
 ## Running tests
 
@@ -122,11 +117,9 @@ Python sibling's own README at this exact point in its lineage.
 `subsystems/DriveTrainTest.java` gained four tests over the poc-java branch's
 version -- see [What changed](#what-changed-from-teaching-bot-poc-java) above.
 `odometryTracksStraightLineDriving` calls `drivetrain.periodic()` directly rather
-than stepping the scheduler, matching the Python sibling's pattern exactly (see that
-branch's own README for why its version needs to do this to dodge a physics-engine
-race -- this branch has no physics engine to race, so the direct call here is really
-just for one deterministic update from a known sensor state, not a workaround for
-anything).
+than stepping the scheduler. This branch has no physics engine to race, so the
+direct call here is simply for one deterministic update from a known sensor state,
+not a workaround for anything.
 
 ## Building and running this project
 
@@ -143,11 +136,9 @@ Identical to `teaching-bot-poc-java` -- see that branch's README for the
 Identical to `teaching-bot-poc-java`'s list, plus one addition specific to this
 branch:
 
-- **Odometry added on its own, before vision, as a separate branch** -- not because
-  Java needed it split up any differently than Python did, but because the same
-  pedagogical argument applies in both languages: dead reckoning and vision
-  correction are two separable ideas worth understanding one at a time. See
-  [Odometry and kinematics](#odometry-and-kinematics) above.
+- **Odometry added on its own, before vision, as a separate branch** -- because
+  dead reckoning and vision correction are two separable ideas worth understanding
+  one at a time. See [Odometry and kinematics](#odometry-and-kinematics) above.
 
 ## Annotated source code
 
@@ -165,11 +156,7 @@ package frc.robot;
  * (2026_competition_code) -- see that repo's Constants.java. Nothing functional lives
  * here, only numbers/IDs.
  *
- * <p>A note for anyone coming from the Python sibling of this project
- * (teaching-bot-poc, in this same repo): Python's constants.py used a plain class per
- * subsystem with bare {@code ALL_CAPS = value} attributes -- Python doesn't require a
- * value to be typed, and a class attribute is "constant" purely by convention (nothing
- * stops code from reassigning it). Java has no such convention-only option: every field
+ * <p>Java has no convention-only option for declaring a constant: every field
  * needs a declared type ({@code int}, {@code double}, {@code boolean}, ...), and making
  * it an actual, enforced constant needs two keywords together:
  * <ul>
@@ -440,13 +427,12 @@ import edu.wpi.first.wpilibj2.command.CommandScheduler;
  *
  * <p><b>Corrected during a post-hoc code-review pass:</b> this class used to extend a
  * class called {@code TimedCommandRobot}, imported from
- * {@code edu.wpi.first.wpilibj2.command}. That class does not exist in Java WPILib --
- * it's a RobotPy-only convenience ({@code commands2.TimedCommandRobot}, in the Python
- * bindings) that automatically calls {@code CommandScheduler.getInstance().run()}
- * every loop; there's no Java equivalent that does the same thing implicitly. The
- * mistake would have failed to compile with "cannot find symbol," and even patched to
- * compile, nothing would have called the scheduler at all -- autonomous and teleop
- * commands would never actually run.
+ * {@code edu.wpi.first.wpilibj2.command}. That class does not exist in Java
+ * WPILib's {@code commands2} package -- there is no built-in robot base class that
+ * automatically calls {@code CommandScheduler.getInstance().run()} every loop for
+ * you. The mistake would have failed to compile with "cannot find symbol," and even
+ * patched to compile, nothing would have called the scheduler at all -- autonomous
+ * and teleop commands would never actually run.
  *
  * <p>The fix: extend the real {@link TimedRobot} directly, and call the scheduler
  * explicitly, once, from an overridden {@code robotPeriodic()} below -- exactly what
@@ -457,16 +443,15 @@ import edu.wpi.first.wpilibj2.command.CommandScheduler;
  *
  * <p>No AdvantageKit, no vision-specific logging (unlike the real competition port's
  * {@code Robot.java}) -- just {@link DataLogManager} for on-disk + NetworkTables
- * logging, matching the Python teaching-bot's {@code robot.py} exactly.
+ * logging.
  */
 public class Robot extends TimedRobot {
     // `Command` (an interface/abstract class) is the TYPE; `m_autonomousCommand` can
     // hold `null` (no autonomous command selected) or any object that implements
-    // Command. Python's equivalent used `Optional[Command] = None` as a type hint --
-    // Java has no separate "nullable" annotation built into the language the way
-    // Python's `Optional[X]` is; ANY non-primitive Java type (anything that isn't
-    // `int`/`double`/`boolean`/etc.) can already hold `null`, so `Command` alone is the
-    // whole type, and `null` is a value it can take on without any extra syntax.
+    // Command. Java has no separate "nullable" annotation built into the language --
+    // ANY non-primitive Java type (anything that isn't `int`/`double`/`boolean`/etc.)
+    // can already hold `null`, so `Command` alone is the whole type, and `null` is a
+    // value it can take on without any extra syntax.
     private Command m_autonomousCommand;
 
     // `RobotContainer` is a type WE wrote (see RobotContainer.java) -- Java doesn't
@@ -588,11 +573,7 @@ public class RobotContainer {
 
     /**
      * {@code CommandXboxController} is the current, non-deprecated way to bind
-     * buttons to commands for an Xbox-style controller as of WPILib 2026 -- the same
-     * class name in both the Java and Python bindings (Python's is a thin wrapper
-     * around this very Java/C++ implementation, which is why the class names and
-     * method names on it already match almost exactly between the two languages,
-     * unlike REVLib/Phoenix6/Studica's separately-written Java and Python APIs).
+     * buttons to commands for an Xbox-style controller as of WPILib 2026.
      */
     public RobotContainer() {
         configureDefaultCommands();
@@ -699,19 +680,17 @@ import edu.wpi.first.wpilibj2.command.SubsystemBase;
  * full reasoning behind that split, and commands/ for this subsystem's four commands
  * (teleop drive, drive-to-distance, turn-to-angle, reset gyro).
  *
- * <p>{@code extends SubsystemBase} is Java's equivalent of Python's
- * {@code class DriveTrain(Subsystem):} -- {@code SubsystemBase} is the WPILib base
- * class that registers this object with the CommandScheduler and gives it a default,
- * do-nothing {@code periodic()} to override.
+ * <p>{@code extends SubsystemBase} is how a class opts into the WPILib
+ * command-based framework's subsystem machinery -- {@code SubsystemBase} is the
+ * WPILib base class that registers this object with the CommandScheduler and gives
+ * it a default, do-nothing {@code periodic()} to override.
  *
  * <p>The {@code teaching-bot-poc-java} branch this one builds on stopped at raw
  * encoder distances and a raw gyro heading -- no kinematics, no odometry. This branch
  * adds {@code DifferentialDriveKinematics} (the math relating each wheel's own speed
  * to the whole robot's speed/turn rate) and pure encoder+gyro dead reckoning via
  * {@code DifferentialDriveOdometry} to track the robot's estimated (X, Y, heading)
- * position on the field -- exactly the same two pieces, in the same order, that the
- * Python sibling's {@code teaching-bot-odometry} branch adds to its own
- * {@code DriveTrain}. Vision-based drift correction is a deliberate <i>next</i>
+ * position on the field. Vision-based drift correction is a deliberate <i>next</i>
  * lesson, not a starting one -- see the {@code teaching-bot-vision-java} branch.
  */
 public class DriveTrain extends SubsystemBase {
@@ -732,9 +711,9 @@ public class DriveTrain extends SubsystemBase {
     // own methods can reach it directly (an outside caller has to go through a public
     // method like drive() or getLeftDistanceMeters() instead); `final` means the field
     // is assigned exactly once -- here, right where it's declared -- and can never be
-    // reassigned to point at a different SparkMax object afterward. Unlike Python,
-    // where "private" is only the `_` naming convention this project's own style guide
-    // enforces, Java's `private` is a real access restriction the compiler checks.
+    // reassigned to point at a different SparkMax object afterward. Java's `private`
+    // is a real access restriction the compiler checks, not merely a naming
+    // convention.
     private final SparkMax leftLead = new SparkMax(LEFT_LEAD_CAN_ID, MotorType.kBrushless);
     private final SparkMax leftFollow = new SparkMax(LEFT_FOLLOW_CAN_ID, MotorType.kBrushless);
     private final SparkMax rightLead = new SparkMax(RIGHT_LEAD_CAN_ID, MotorType.kBrushless);
@@ -749,12 +728,10 @@ public class DriveTrain extends SubsystemBase {
     // deliberate exception to the `private` rule every other hardware field on this
     // page follows. DriveTrainTest.java (in this same frc.robot.subsystems package)
     // needs to poke these two objects' simulated position directly with
-    // `.setPosition(...)` to test odometry and the PID commands without a real robot --
-    // the Python sibling's equivalent test does the same thing by reaching past its
-    // `_left_encoder`'s leading-underscore naming CONVENTION, since Python has no
-    // enforced privacy to get past. Java's `private` is enforced by the compiler with
-    // no such loophole, so getting the same test access here needs an actual, coarser
-    // access level instead of a bypassable naming hint. Package-private is the
+    // `.setPosition(...)` to test odometry and the PID commands without a real robot.
+    // Java's `private` is enforced by the compiler with no loophole around it, so
+    // getting that test access here needs an actual, coarser access level instead of
+    // a bypassable naming hint. Package-private is the
     // narrowest level that still works: any class in frc.robot.subsystems can reach
     // these fields, but nothing outside that package (including RobotContainer.java,
     // in frc.robot) can -- a real, if slightly wider, restriction, not merely a polite
@@ -849,8 +826,7 @@ public class DriveTrain extends SubsystemBase {
         // A SparkMaxConfig object describes a full desired configuration; it doesn't
         // take effect until passed to .configure(). This "build a config object, then
         // apply it" two-step (rather than one call per setting) is REVLib's pattern for
-        // every SparkMax on this robot -- identical in Java and Python, just with
-        // camelCase method names either way (REVLib's Java API was never snake_cased).
+        // every SparkMax on this robot, using camelCase method names throughout.
         //
         // positionConversionFactor/velocityConversionFactor rescale the raw "motor
         // shaft rotations" the encoder actually measures into "meters the robot has
@@ -1184,10 +1160,8 @@ public class Gripper extends SubsystemBase {
     /**
      * {@code speed} is a duty cycle in [-1, 1]: positive intakes, negative ejects -- see
      * {@code GripperConstants.INTAKE_SPEED}/{@code EJECT_SPEED}. The parameter is
-     * written {@code double speed} rather than {@code speed: float} the way Python
-     * wrote it -- Java always puts the type BEFORE the name, with no colon, for every
-     * parameter and every field in this project; Python puts the type AFTER the name,
-     * with a colon, and only when someone chooses to add the (optional) hint.
+     * written {@code double speed} -- Java always puts the type BEFORE the name, with
+     * no colon, for every parameter and every field in this project.
      */
     public void setSpeed(double speed) {
         rollerMotor.set(speed);
@@ -1228,14 +1202,11 @@ import edu.wpi.first.wpilibj2.command.SubsystemBase;
  * distance-based RPM table (no vision on this robot) -- just a single configurable
  * target speed. Demonstrates Phoenix 6's velocity-control pattern.
  *
- * <p>Unlike REVLib and Studica's Java bindings, whose method names read almost
- * identically to their Python counterparts (just camelCase instead of snake_case),
- * Phoenix 6's Java enum constant names use their own capitalization
- * ({@code InvertedValue.Clockwise_Positive}) that differs even in capitalization
- * convention from the same enum in Python ({@code InvertedValue.CLOCKWISE_POSITIVE})
- * -- CTRE's Java and Python bindings were written somewhat independently. Worth noting
- * explicitly the first time a rookie moving between this Java project and its Python
- * sibling hits it.
+ * <p>Unlike REVLib and Studica's Java bindings elsewhere in this project, whose
+ * method names follow ordinary camelCase, Phoenix 6's Java enum constant names use
+ * their own capitalization convention ({@code InvertedValue.Clockwise_Positive}) --
+ * CTRE's library was written independently of the others, so this inconsistency is
+ * worth flagging explicitly the first time a reader of this codebase hits it.
  *
  * <p>Like the other subsystems, this file only exposes plain hardware actions
  * ({@code setTargetRpm()}, {@code stop()}, the getters) -- the actual Command that uses
@@ -1382,8 +1353,7 @@ public class Trigger extends SubsystemBase {
      * constants and their TODOs -- this is exactly the kind of thing that must be
      * checked on the real robot, since guessing wrong here silently inverts the
      * sensor's meaning). {@code cond ? a : b} is Java's ternary operator -- "if cond is
-     * true, this whole expression's value is a, otherwise it's b" -- the closest Java
-     * equivalent to Python's {@code a if cond else b}.
+     * true, this whole expression's value is a, otherwise it's b."
      */
     public boolean isAtHome() {
         boolean raw = limitSwitch.get();
@@ -1916,17 +1886,12 @@ public class TeleopDriveCommand extends Command {
      *       TeleopDriveCommand(...)}. Compare this to {@code private} fields like
      *       {@code drivetrain} above: those can only be read by code written inside
      *       this very class. Java requires an explicit access modifier decision like
-     *       this on every field and method; Python has no equivalent keyword; it only
-     *       has the {@code _leadingUnderscore} naming CONVENTION this whole project
-     *       already uses to mean the same thing, which nothing in the language itself
-     *       enforces.</li>
-     *   <li><b>{@code DriveTrain drivetrain}</b> -- a parameter. Unlike Python, where
-     *       a type hint after a colon ({@code drivetrain: DriveTrain}) is optional
-     *       and checked only by external tools (never by the Python interpreter
-     *       itself), Java requires every parameter to have a declared type, written
-     *       BEFORE the name with no colon, and the compiler itself refuses to compile
-     *       code that passes the wrong type here -- there is no way to skip this in
-     *       Java the way an un-annotated Python parameter skips it.</li>
+     *       this on every field and method, and the compiler enforces whichever one
+     *       is chosen.</li>
+     *   <li><b>{@code DriveTrain drivetrain}</b> -- a parameter. Java requires every
+     *       parameter to have a declared type, written BEFORE the name with no colon,
+     *       and the compiler itself refuses to compile code that passes the wrong
+     *       type here.</li>
      *   <li><b>{@code CommandXboxController driverController}</b> -- the physical Xbox
      *       controller plugged into port 0 (see {@code Constants.OperatorConstants
      *       .DRIVER_CONTROLLER_PORT}, and RobotContainer.java, where the real
@@ -1940,35 +1905,26 @@ public class TeleopDriveCommand extends Command {
      *       A constructor is the one exception: it implicitly builds and returns the
      *       new object, and Java's grammar does not allow ANY return-type keyword to
      *       be written on this line, {@code void} included -- writing one is a syntax
-     *       error, not just bad style. Python's {@code __init__(self, ...) -> None} is
-     *       different in exactly this respect: Python DOES allow (and this project's
-     *       Python sibling uses) an explicit {@code -> None} annotation on
-     *       {@code __init__}, because in Python {@code __init__} is an ordinary method
-     *       that happens to conventionally return {@code None} -- Java's constructor
-     *       is a distinct kind of member with its own grammar rule forbidding a return
-     *       type outright.</li>
+     *       error, not just bad style. A constructor is a distinct kind of class
+     *       member with its own grammar rule forbidding a return type outright.</li>
      *   <li><b>{@code super(); }-- wait, there is no {@code super()} call written
-     *       here.</b> Every command's constructor in this project's Python sibling
-     *       starts with an explicit {@code super().__init__()}. In Java, if a
-     *       constructor's first line does NOT explicitly call {@code super(...)}, the
-     *       compiler automatically inserts a call to the parent class's no-argument
-     *       constructor for you, as if it were the first line. {@code Command}'s own
-     *       no-argument constructor does the setup this class needs, so nothing
-     *       explicit is required here -- unlike Python, where {@code __init__} is
-     *       never called automatically and always has to be invoked by name.</li>
+     *       here.</b> In Java, if a constructor's first line does NOT explicitly call
+     *       {@code super(...)}, the compiler automatically inserts a call to the
+     *       parent class's no-argument constructor for you, as if it were the first
+     *       line. {@code Command}'s own no-argument constructor does the setup this
+     *       class needs, so nothing explicit is required here.</li>
      * </ul>
      */
     public TeleopDriveCommand(DriveTrain drivetrain, CommandXboxController driverController) {
         this.drivetrain = drivetrain;
         this.driverController = driverController;
         // `this.drivetrain = drivetrain;` -- the field and the parameter share the
-        // same name on purpose (this project's Java convention, mirroring the Python
-        // sibling's `self._drivetrain = drivetrain`), which means `this.` in front of
-        // the left-hand side is not optional decoration here: without it, `drivetrain
-        // = drivetrain;` would just assign the parameter to itself and leave the
-        // field permanently unset. `this.` explicitly means "the field belonging to
-        // the object being constructed," disambiguating it from the same-named
-        // parameter.
+        // same name on purpose (this project's Java convention), which means `this.`
+        // in front of the left-hand side is not optional decoration here: without it,
+        // `drivetrain = drivetrain;` would just assign the parameter to itself and
+        // leave the field permanently unset. `this.` explicitly means "the field
+        // belonging to the object being constructed," disambiguating it from the
+        // same-named parameter.
         addRequirements(drivetrain);
     }
 
@@ -2085,13 +2041,11 @@ public final class AutoChooser {
 
     /**
      * {@code SendableChooser<Command>} -- the angle brackets are a Java GENERIC type
-     * parameter: this says "a SendableChooser whose options are all Command objects,"
-     * the same idea as Python's {@code SendableChooser} which can hold any type of
-     * option but here is used consistently with Command values. Unlike Python (which
-     * doesn't check this at all at runtime), Java's compiler uses the {@code <Command>}
-     * to guarantee every option ever added to (or read from) this specific chooser
-     * really is a Command, catching a wrong-type mistake at compile time instead of
-     * only when the mistaken value is actually used.
+     * parameter: this says "a SendableChooser whose options are all Command objects."
+     * Java's compiler uses the {@code <Command>} to guarantee every option ever added
+     * to (or read from) this specific chooser really is a Command, catching a
+     * wrong-type mistake at compile time instead of only when the mistaken value is
+     * actually used.
      */
     public static SendableChooser<Command> build(DriveTrain drivetrain) {
         SendableChooser<Command> chooser = new SendableChooser<>();
@@ -2127,13 +2081,11 @@ import frc.robot.subsystems.DriveTrain;
  * internally (see its constructor), so nothing in this file ever touches metric units.
  *
  * <p>{@code final class AutoRoutines} with a {@code private AutoRoutines() {}}
- * constructor and only {@code static} methods is Java's usual stand-in for a Python
- * module of free functions: Python's {@code autonomous/routines.py} could just define
- * {@code def drive_forward_only(drivetrain): ...} at the top level of a file, since
- * Python allows functions to exist outside any class. Java requires every method to
- * live inside some class, so a class that is never instantiated (only ever referenced
- * as {@code AutoRoutines.driveForwardOnly(...)}) is the idiomatic way to group a small
- * set of related, state-free functions the way Python would with a module.
+ * constructor and only {@code static} methods is Java's idiomatic way to group a
+ * small set of related, state-free functions. Java requires every method to live
+ * inside some class, so a class that is never instantiated (only ever referenced as
+ * {@code AutoRoutines.driveForwardOnly(...)}) is how this project collects functions
+ * that don't belong to any particular object.
  */
 public final class AutoRoutines {
     private AutoRoutines() {}
@@ -2180,9 +2132,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for Elevator's limit-switch-gated raise/lower commands -- a Java
- * translation of the Python sibling's {@code test_elevator.py}. {@link DIOSim} is
- * keyed by DIO port number, not by reaching into any object, so no visibility changes
+ * Unit tests for Elevator's limit-switch-gated raise/lower commands. {@link DIOSim}
+ * is keyed by DIO port number, not by reaching into any object, so no visibility changes
  * to Elevator.java were needed to write this file the way DriveTrainTest.java needed
  * one for the SparkMax encoders.
  */
@@ -2275,14 +2226,11 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Smoke test: step the whole robot through disabled -&gt; autonomous -&gt; teleop and
- * confirm nothing throws. This is a Java translation of the Python sibling's
- * {@code test_robot_lifecycle.py}.
+ * confirm nothing throws.
  *
- * <p>Python's version runs under pyfrc's pytest plugin, which provides ready-made
- * {@code robot}/{@code control} fixtures ({@code control.step_timing(...)} advances
- * simulated time AND flips the enabled/autonomous mode flags in one call). WPILib's
- * Java toolchain has no equivalent plugin, so this file does by hand what that fixture
- * did for free: {@link HAL#initialize} boots the simulated hardware layer,
+ * <p>WPILib's Java toolchain has no built-in test-fixture plugin that flips
+ * enabled/autonomous mode flags and advances simulated time for you, so this file
+ * does that work by hand: {@link HAL#initialize} boots the simulated hardware layer,
  * {@link DriverStationSim} sets the enabled/autonomous mode flags a real driver station
  * would set, and {@link SimHooks#stepTiming} advances the simulated clock and lets
  * {@link CommandScheduler} run its periodic loop the corresponding number of times.
@@ -2374,8 +2322,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for Trigger's FireCommand edge-detection state machine -- a Java
- * translation of the Python sibling's {@code test_trigger.py}.
+ * Unit tests for Trigger's FireCommand edge-detection state machine.
  *
  * <p>The cam has only one sensor (a limit switch at "home"), so "one fire" is defined
  * as: leave home, then come back to home. These tests exercise that logic directly
@@ -2501,8 +2448,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for DriveTrain's encoder-distance bookkeeping, odometry, kinematics, and
- * its PID autonomous commands -- a Java translation of the Python sibling's
- * {@code test_drivetrain.py}.
+ * its PID autonomous commands.
  *
  * <p>This test class lives in {@code frc.robot.subsystems} (not {@code frc.robot},
  * where most of this project's classes live) specifically so it can reach
@@ -2510,16 +2456,13 @@ import org.junit.jupiter.api.Test;
  * directly -- see the comment on those fields in DriveTrain.java for why they aren't
  * simply {@code private} the way every other hardware field in this project is.
  *
- * <p>This project has no physics simulation wired into its Gradle build the way the
- * Python sibling's {@code physics.py} is wired into {@code robotpy sim} (writing an
- * equivalent {@code simulationPeriodic()} model is a good exercise, not done here) --
- * so unlike the Python tests, nothing here overwrites a poked encoder or gyro value on
- * its own. That actually makes these tests SIMPLER than their Python counterparts:
- * there's no physics-engine-races-the-scheduler gotcha to work around, since nothing
- * is racing. The odometry tests below still call {@code drivetrain.periodic()}
- * directly, matching the Python sibling's own pattern, even though nothing here
- * strictly requires bypassing the scheduler the way the Python version does -- it
- * keeps the two test suites reading the same way line for line.
+ * <p>This project has no physics simulation wired into its Gradle build (writing an
+ * equivalent {@code simulationPeriodic()} model is a good exercise, not done here),
+ * so nothing here overwrites a poked encoder or gyro value on its own. That keeps
+ * these tests simple: there's no physics-engine-races-the-scheduler gotcha to work
+ * around, since nothing is racing. The odometry tests below still call
+ * {@code drivetrain.periodic()} directly rather than stepping the scheduler, simply
+ * for one deterministic update from a known sensor state.
  */
 class DriveTrainTest {
 
@@ -2580,8 +2523,7 @@ class DriveTrainTest {
         // Simulate the robot having driven all the way there by writing the target
         // distance straight onto both encoders -- same RelativeEncoder.setPosition()
         // call configureMotors() itself uses to zero them at startup, just called with
-        // a nonzero value here. This is the direct Java equivalent of the Python
-        // test's `drivetrain._left_encoder.setPosition(target_meters)`.
+        // a nonzero value here.
         double targetMeters = 1.0 * Constants.METERS_PER_FOOT;
         drivetrain.leftEncoder.setPosition(targetMeters);
         drivetrain.rightEncoder.setPosition(targetMeters);
@@ -2599,9 +2541,7 @@ class DriveTrainTest {
         // Studica's AHRS exposes its simulated yaw through WPILib's generic
         // SimDeviceSim registry under the name "navX-Sensor[4]" rather than through a
         // method on the AHRS object itself -- the same mechanism (and the same
-        // device name) the real competition port's own physics simulation uses, and
-        // the same one the Python sibling's test pokes via
-        // `wpilib.simulation.SimDeviceSim("navX-Sensor[4]")`.
+        // device name) the real competition port's own physics simulation uses.
         SimDeviceSim navxSim = new SimDeviceSim("navX-Sensor[4]");
 
         TurnToAngleCommand command = new TurnToAngleCommand(drivetrain, 90.0);

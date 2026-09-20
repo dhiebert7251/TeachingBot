@@ -8,8 +8,9 @@ import edu.wpi.first.wpilibj2.command.CommandScheduler;
 
 /**
  * Extends {@link TimedRobot} directly and calls the scheduler explicitly from
- * {@code robotPeriodic()} -- there is no Java equivalent of RobotPy's
- * {@code TimedCommandRobot} that does this implicitly.
+ * {@code robotPeriodic()} -- Java's {@code commands2} library provides no
+ * {@code TimedCommandRobot} convenience class that does this automatically, so this
+ * override is required.
  */
 public class Robot extends TimedRobot {
     private Command m_autonomousCommand;
