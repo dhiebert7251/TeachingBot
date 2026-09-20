@@ -10,8 +10,8 @@ import edu.wpi.first.wpilibj2.command.CommandScheduler;
  * Entry point for the teaching-bot proof of concept.
  *
  * <p>Extends {@link TimedRobot} directly and calls the scheduler explicitly from
- * {@code robotPeriodic()} below -- an earlier draft extended a Python-only
- * {@code TimedCommandRobot} convenience that doesn't exist in Java WPILib, which
+ * {@code robotPeriodic()} below -- an earlier draft extended a
+ * {@code TimedCommandRobot} class that doesn't exist in Java WPILib, which
  * would have left nothing calling the scheduler at all.
  */
 public class Robot extends TimedRobot {
